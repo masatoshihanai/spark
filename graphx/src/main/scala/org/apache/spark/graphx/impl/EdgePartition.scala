@@ -21,7 +21,7 @@ import scala.reflect.ClassTag
 
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.util.collection.GraphXPrimitiveKeyOpenHashMap
-import org.apache.spark.util.collection.BitSet
+import org.apache.spark.util.collection.{BitSet, PrimitiveVector, Sorter}
 
 /**
  * A collection of edges, along with referenced vertex attributes and an optional active vertex set
@@ -102,6 +102,142 @@ class EdgePartition[
       localSrcIds, localDstIds, data, index, global2local, local2global, newVertexAttrs,
       activeSet)
   }
+
+  /** Return a new `EdgePartition` with this edge partition and additional edges */
+  def withAdditionalEdges(additionalEdgesItr: Iterator[Edge[ED]], defaultValue: VD)
+  : EdgePartition[ED, VD] = {
+    val addEdges = additionalEdgesItr.toArray
+    new Sorter(Edge.edgeArraySortDataFormat[ED])
+      .sort(addEdges, 0, addEdges.length, Edge.lexicographicOrdering)
+    val newLocalSrcIds = new Array[Int](addEdges.length + localDstIds.length)
+    val newLocalDstIds = new Array[Int](addEdges.length + localDstIds.length)
+    val newData = new Array[ED](addEdges.length + localDstIds.length)
+    val addLocal2global = new PrimitiveVector[VertexId]
+
+    var currAddEdge = 0
+    var insertPoint = 0
+    var firstInsertPoint = 0
+    while (currAddEdge < addEdges.length) {
+      val addSrcId = addEdges(currAddEdge).srcId
+      val addDstId = addEdges(currAddEdge).dstId
+      // Search the point for the new edge to insert
+      val oldPoint = insertPoint
+      val currLocalId = global2local.getOrElse(addSrcId, -1)
+      if (currLocalId != -1) {
+        var insertingPointLocalId = currLocalId
+        while (insertingPointLocalId < local2global.length &&
+          index.getOrElse(local2global(insertingPointLocalId), -1) < 0) {
+          insertingPointLocalId += 1
+        }
+        if (insertingPointLocalId < local2global.length) {
+          insertPoint = index(local2global(insertingPointLocalId))
+        } else {
+          insertPoint = localSrcIds.length
+        }
+      } else {
+        insertPoint = localSrcIds.length
+      }
+      if (insertPoint != localSrcIds.length) {
+        // binary-search-like traversal
+        def binarySearch(lower: Int, upper: Int): Int = {
+          if (lower > upper) { return lower }
+          val mid = lower + (upper - lower) / 2
+          if (localSrcIds(mid) > global2local.getOrElse(addSrcId, Int.MaxValue)) {
+            binarySearch(lower, mid - 1)
+           } else {
+            if (localDstIds(mid) > global2local.getOrElse(addDstId, Int.MaxValue)){
+              binarySearch(lower, mid -1)
+            } else if (localDstIds(mid) < global2local.getOrElse(addDstId, Int.MaxValue)) {
+              binarySearch(mid + 1, upper)
+            } else {
+              mid
+            }
+          }
+        }
+        insertPoint = binarySearch(insertPoint, localSrcIds.length - 1)
+
+//        // incremental search
+//        while (insertPoint < localSrcIds.length
+//          && localDstIds(insertPoint) < global2local.getOrElse(addDstId, Int.MaxValue)
+//          && localSrcIds(insertPoint) == global2local.getOrElse(addSrcId, -1)) {
+//          insertPoint += 1
+//        }
+      }
+      if (currAddEdge == 0) firstInsertPoint = insertPoint
+
+      // Construct updated array from the old array and the new inserting edge
+      System.arraycopy(localSrcIds, oldPoint,
+        newLocalSrcIds, oldPoint + currAddEdge, insertPoint - oldPoint)
+      System.arraycopy(localDstIds, oldPoint,
+        newLocalDstIds, oldPoint + currAddEdge, insertPoint - oldPoint)
+      System.arraycopy(data, oldPoint,
+        newData, oldPoint + currAddEdge, insertPoint - oldPoint)
+      newLocalSrcIds(insertPoint + currAddEdge)
+        = global2local.changeValue(addSrcId, {
+          val newVertex = addLocal2global.length + local2global.length
+          addLocal2global += addSrcId
+          newVertex
+        }, identity)
+      newLocalDstIds(insertPoint + currAddEdge)
+        = global2local.changeValue(addDstId, {
+          val newVertex = addLocal2global.length + local2global.length
+          addLocal2global += addDstId
+          newVertex
+        }, identity)
+
+      newData(insertPoint + currAddEdge) = addEdges(currAddEdge).attr
+      activeSet match {
+        case Some(x) => {
+          x.add(newLocalSrcIds(insertPoint + currAddEdge))
+          x.add(newLocalDstIds(insertPoint + currAddEdge))
+        }
+        case None =>
+      }
+      currAddEdge += 1
+    } // end of loop
+
+    // Copy a rest of the old arrays if exist
+    if (insertPoint < localSrcIds.length) {
+      System.arraycopy(localSrcIds, insertPoint,
+        newLocalSrcIds, insertPoint + currAddEdge, localSrcIds.length - insertPoint)
+      System.arraycopy(localDstIds, insertPoint,
+        newLocalDstIds, insertPoint + currAddEdge, localDstIds.length - insertPoint)
+    }
+
+    // Add new vertices to local2global
+    addLocal2global.trim()
+    val newLocal2global = new Array[VertexId](local2global.length + addLocal2global.length)
+    System.arraycopy(local2global, 0, newLocal2global, 0, local2global.length)
+    System.arraycopy(addLocal2global.toArray, 0,
+      newLocal2global, local2global.length, addLocal2global.length)
+
+    // Update index
+    var currLocalSrcId = -1
+    var i = index.getOrElse(newLocalSrcIds(firstInsertPoint), localSrcIds.length)
+    while (i < newLocalSrcIds.length) {
+      if (currLocalSrcId != newLocalSrcIds(i)) {
+        currLocalSrcId = newLocalSrcIds(i)
+        index.update(newLocal2global(currLocalSrcId), i)
+        var j = 1
+        while (currLocalSrcId + j < local2global.length &&
+          index.getOrElse(local2global(currLocalSrcId + j), -1) < 0) {
+          j += 1
+        }
+        if (currLocalSrcId + j < local2global.length) {
+          i = index(newLocal2global(currLocalSrcId + j))
+        }
+      }
+      i += 1
+    }
+
+    // Add new vertex attributes
+    val newVertexAttrs: Array[VD] = Array.fill(newLocal2global.length)(defaultValue)
+    System.arraycopy(vertexAttrs, 0, newVertexAttrs, 0, vertexAttrs.length)
+
+    new EdgePartition(
+      newLocalSrcIds, newLocalDstIds, newData, index, global2local, newLocal2global,
+      newVertexAttrs, activeSet)
+  } // end withAdditionalEdges
 
   @inline private def srcIds(pos: Int): VertexId = local2global(localSrcIds(pos))
 

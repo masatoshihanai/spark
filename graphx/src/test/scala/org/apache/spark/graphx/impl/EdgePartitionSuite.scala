@@ -32,6 +32,61 @@ class EdgePartitionSuite extends SparkFunSuite {
     builder.toEdgePartition
   }
 
+  test("withAdditionalEdges") {
+    val edges = Set(Edge(0, 1, 0), Edge(1, 2, 0), Edge(2, 0, 0))
+    val builder = new EdgePartitionBuilder[Int, Int]
+    for (e <- edges) {
+      builder.add(e.srcId, e.dstId, e.attr)
+    }
+
+    // Add new edge with existing src vertex and existing dst vertex
+    val addEdgesWithExSrcExDst = Set(Edge(1, 0, 99), Edge(2, 1, 99))
+    var expected = List(Edge(0, 1, 0), Edge(1, 0, 99), Edge(1, 2, 0), Edge(2, 0, 0), Edge(2, 1, 99))
+    var edgePartition = builder.toEdgePartition
+    assert(edgePartition.withAdditionalEdges(addEdgesWithExSrcExDst.toIterator, 0)
+      .iterator.map(_.copy()).toList === expected)
+
+    // Add new edge with new src vertex and existing dst vertex
+    val addEdgesWithNewSrcExDst = Set(Edge(3, 0, 99), Edge(3, 1, 99))
+    expected = List(Edge(0, 1, 0), Edge(1, 2, 0), Edge(2, 0, 0), Edge(3, 0, 99), Edge(3, 1, 99))
+    edgePartition = builder.toEdgePartition
+    assert(edgePartition.withAdditionalEdges(addEdgesWithNewSrcExDst.toIterator, 0)
+      .iterator.map(_.copy()).toList === expected)
+
+    // Add new edge with existing src vertex and new dst vertex
+    val addEdgesWithExSrcNewDst = Set(Edge(0, 3, 99), Edge(1, 3, 99))
+    expected = List(Edge(0, 1, 0), Edge(0, 3, 99), Edge(1, 2, 0), Edge(1, 3, 99)
+      , Edge(2, 0, 0))
+    edgePartition = builder.toEdgePartition
+    assert(edgePartition.withAdditionalEdges(addEdgesWithExSrcNewDst.toIterator, 0)
+      .iterator.map(_.copy()).toList === expected)
+
+    // Add new edge with new src vertex and new dst vertex
+    val addEdgesWithNewSrcNewDst = Set(Edge(3, 3, 99), Edge(4, 5, 99))
+    expected = List(Edge(0, 1, 0), Edge(1, 2, 0), Edge(2, 0, 0), Edge(3, 3, 99), Edge(4, 5, 99))
+    edgePartition = builder.toEdgePartition
+    assert(edgePartition.withAdditionalEdges(addEdgesWithNewSrcNewDst.toIterator, 0)
+      .iterator.map(_.copy()).toList === expected)
+
+    // Vertices active set
+    val addEdge = Set(Edge(3, 3, 0))
+    edgePartition = builder.toEdgePartition.withActiveSet(Iterator(0, 1, 2))
+    val ret = edgePartition.withAdditionalEdges(addEdge.toIterator, 0)
+    assert(ret.numActives.get == 4)
+    assert(ret.isActive(0))
+    assert(ret.isActive(1))
+    assert(ret.isActive(2))
+    assert(ret.isActive(3))
+
+    // Vertex attributes
+    val it = builder.toEdgePartition.updateVertices(Iterator((0L, 0), (1L, 1), (2L, 2)))
+      .withAdditionalEdges(addEdge.toIterator, 555).tripletIterator(true, false)
+    it.foreach { x =>
+      if (x.srcId == 3) assert(x.srcAttr == 555)
+      else assert(x.srcAttr == x.srcId.toInt)
+    }
+  }
+
   test("reverse") {
     val edges = List(Edge(0, 1, 0), Edge(1, 2, 0), Edge(2, 0, 0))
     val reversedEdges = List(Edge(0, 2, 0), Edge(1, 0, 0), Edge(2, 1, 0))

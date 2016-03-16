@@ -296,6 +296,20 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
   def reverse: Graph[VD, ED]
 
   /**
+   * Add new edges to the graph and construct new graph. The additional vertices are
+   * initiated as active.
+   *
+   * @param addEdges additional edges
+   * @param defaultVertexValue  defautValue for addition vertices
+   * @param partitionStrategy for `addEdges`, which must be same as the graph's one.
+   *
+   * @return the new graph containing `addEdges`
+   */
+  def addEdges(addEdges: RDD[Edge[ED]],
+      defaultVertexValue: VD,
+      partitionStrategy: PartitionStrategy): Graph[VD, ED]
+
+  /**
    * Restricts the graph to only the vertices and edges satisfying the predicates. The resulting
    * subgraph satisifies
    *
