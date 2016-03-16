@@ -176,4 +176,43 @@ class EdgePartitionSuite extends SparkFunSuite {
       assert(aSer.tripletIterator().toList === a.tripletIterator().toList)
     }
   }
+
+  // test("withAdditionalEdgesPerformanceTest") {
+  ignore("withAdditionalEdgesPerformanceTest") {
+    // scalastyle:off println
+    println(" # edges,   # add, full, inc. (ms)")
+    // var numAddEdgesItr = Iterator(10)
+    val numAddEdgesItr = Iterator(10, 100, 1000, 10000, 100000, 1000000)
+    for (numAddEdges <- numAddEdgesItr) {
+      val numEdgeItr = Iterator(1000, 10000, 100000, 1000000)
+      // val numEdgeItr = Iterator(1000000)
+      for (numEdges <- numEdgeItr) {
+        val baseBuilder = new EdgePartitionBuilder[Int, Int]
+        for (i <- 0 until numEdges) { baseBuilder.add(i, i + 1, i) }
+        val basePartition = baseBuilder.toEdgePartition
+
+        val builder = new EdgePartitionBuilder[Int, Int]
+        for (i <- 0 until numEdges + numAddEdges) { builder.add(i, i + 1, i) }
+
+        var startTime = System.currentTimeMillis
+        val fullPartition = builder.toEdgePartition
+        val endTimeScratch = System.currentTimeMillis - startTime
+
+        val addEdgesBuf: scala.collection.mutable.ArrayBuffer[Edge[Int]]
+        = new scala.collection.mutable.ArrayBuffer()
+        for (i <- 0 until numAddEdges) {
+          addEdgesBuf += Edge(numEdges + i, numEdges + i, numEdges + i)
+        }
+        val addEdgeIterator = addEdgesBuf.toIterator
+
+        startTime = System.currentTimeMillis
+        basePartition.withAdditionalEdges(addEdgeIterator, 0)
+        val endTimeIncremental = System.currentTimeMillis - startTime
+
+        print("%8d,".format(numEdges) + "%8d,".format(numAddEdges))
+        println("%5d,".format(endTimeScratch) + "%5d,".format(endTimeIncremental))
+      }
+    }
+    // scalastyle:on println
+  }
 }

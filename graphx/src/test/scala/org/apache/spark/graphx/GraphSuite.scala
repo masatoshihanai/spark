@@ -441,4 +441,96 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
       assert(sc.getPersistentRDDs.isEmpty)
     }
   }
+
+  // test("addEdgesPerformance") {
+  ignore("addEdgesPerformance") {
+
+    def lineGraph(sc: SparkContext, n: Int): Graph[String, Int] = {
+      Graph.fromEdgeTuples(sc.parallelize((0 to n).map(x => (x: VertexId, x + 1: VertexId)), 1), "v")
+    }
+
+    // scalastyle:off println
+    println("# vertices, # add, full, inc, (ms. Line Graph)")
+
+    // Case of line graph
+    // # of add vertices is from 2^4 (16) to 2^7 (128)
+    // # of vertices is from 2^10 (1024) to 2^20 (1048576)
+    for (numAddVertex <- (4 to 7).map(math.pow(2, _).toLong)) {
+      for (numVertex <- (10 to 20).map(math.pow(2, _).toInt)) {
+        val timeFull = withSpark[Long] { sc =>
+          val startTime = System.currentTimeMillis()
+          val line = lineGraph(sc, (numVertex + numAddVertex.toInt)).cache()
+          line.edges.partitionsRDD.count()
+          val endTime = System.currentTimeMillis()
+          line.edges.partitionsRDD.count()
+          val countTime = System.currentTimeMillis() - endTime
+
+          endTime - startTime - countTime
+        }
+
+        val timeInc = withSpark[Long] { sc =>
+          val partitionStrategy = PartitionStrategy.RandomVertexCut
+          val line = lineGraph(sc, numVertex).partitionBy(partitionStrategy).cache()
+          line.edges.partitionsRDD.count()
+          val addEdge = sc.parallelize((1L to numAddVertex).map(x => Edge(x + numVertex, x + numVertex + 1, 1)))
+          addEdge.count()
+
+          val startTime = System.currentTimeMillis()
+          val newGraph = line.addEdges(addEdge, "v", partitionStrategy).cache()
+          newGraph.edges.partitionsRDD.count()
+          val endTime = System.currentTimeMillis()
+          newGraph.edges.partitionsRDD.count()
+          val countTime = System.currentTimeMillis() - endTime
+
+          endTime - startTime - countTime
+        }
+        print("%10d,".format(numVertex) + "%6d,".format(numAddVertex))
+        println("%5d,".format(timeFull) + "%5d".format(timeInc))
+      }
+    }
+    println("# vertices, # add, full, inc, (ms. Star Graph)")
+
+    // Case of star graph
+    for (numAddVertex <- (4 to 7).map(math.pow(2, _).toLong)) {
+      for (numVertex <- (10 to 20).map(math.pow(2, _).toInt)) {
+        val timeFull = withSpark[Long] { sc =>
+          val startTime = System.currentTimeMillis()
+          val star = starGraph(sc, (numVertex + numAddVertex.toInt)).cache()
+          star.edges.partitionsRDD.count()
+          val endTime = System.currentTimeMillis()
+          star.edges.partitionsRDD.count()
+          val countTime = System.currentTimeMillis() - endTime
+
+          endTime - startTime - countTime
+        }
+
+        val timeInc = withSpark[Long] { sc =>
+          val partitionStrategy = PartitionStrategy.RandomVertexCut
+          val star = starGraph(sc, numVertex).partitionBy(partitionStrategy).cache()
+          star.edges.partitionsRDD.count()
+          val addEdge = sc.parallelize((1L to numAddVertex).map(x => Edge(0, x + numVertex, 1)))
+          addEdge.count()
+
+          val startTime = System.currentTimeMillis()
+          val newGraph = star.addEdges(addEdge, "v", partitionStrategy).cache()
+          newGraph.edges.partitionsRDD.count()
+          val endTime = System.currentTimeMillis()
+          newGraph.edges.partitionsRDD.count()
+          val countTime = System.currentTimeMillis() - endTime
+
+          assert(newGraph.vertices.count == (numVertex + numAddVertex + 1))
+          assert(newGraph.vertices.collect.toSet ===
+            (0L to (numVertex + numAddVertex)).map(x => (x, "v")).toSet)
+          assert(newGraph.edges.collect().map(x => (x.srcId, x.dstId)).toSet ===
+            (1L to (numVertex + numAddVertex)).map(x => (0, x)).toSet)
+
+          newGraph.unpersist()
+          endTime - startTime - countTime
+        }
+        print("%10d,".format(numVertex) + "%6d,".format(numAddVertex))
+        println("%5d,".format(timeFull) + "%5d".format(timeInc))
+      }
+    }
+    // scalastyle:on println
+  }
 }
