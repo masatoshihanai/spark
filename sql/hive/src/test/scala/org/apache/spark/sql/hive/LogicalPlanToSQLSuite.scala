@@ -19,8 +19,6 @@ package org.apache.spark.sql.hive
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.{DataFrame, SQLContext}
-import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SQLTestUtils
 
@@ -56,33 +54,6 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
     sql("DROP TABLE IF EXISTS t0")
   }
 
-  private def checkPlan(plan: LogicalPlan, sqlContext: SQLContext, expected: String): Unit = {
-    val convertedSQL = try new SQLBuilder(plan, sqlContext).toSQL catch {
-      case NonFatal(e) =>
-        fail(
-          s"""Cannot convert the following logical query plan back to SQL query string:
-             |
-             |# Original logical query plan:
-             |${plan.treeString}
-           """.stripMargin, e)
-    }
-
-    try {
-      checkAnswer(sql(convertedSQL), DataFrame(sqlContext, plan))
-    } catch { case cause: Throwable =>
-      fail(
-        s"""Failed to execute converted SQL string or got wrong answer:
-           |
-           |# Converted SQL query string:
-           |$convertedSQL
-           |
-           |# Original logical query plan:
-           |${plan.treeString}
-         """.stripMargin,
-        cause)
-    }
-  }
-
   private def checkHiveQl(hiveQl: String): Unit = {
     val df = sql(hiveQl)
 
@@ -96,7 +67,7 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
              |
              |# Resolved query plan:
              |${df.queryExecution.analyzed.treeString}
-           """.stripMargin)
+           """.stripMargin, e)
     }
 
     try {
@@ -113,8 +84,7 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
            |
            |# Resolved query plan:
            |${df.queryExecution.analyzed.treeString}
-         """.stripMargin,
-        cause)
+         """.stripMargin, cause)
     }
   }
 
@@ -168,7 +138,6 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
       """.stripMargin)
   }
 
-
   test("intersect") {
     checkHiveQl("SELECT * FROM t0 INTERSECT SELECT * FROM t0")
   }
@@ -184,18 +153,6 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
   test("self join with group by") {
     checkHiveQl(
       "SELECT x.key, COUNT(*) FROM parquet_t1 x JOIN parquet_t1 y ON x.key = y.key group by x.key")
-  }
-
-  test("join plan") {
-    val expectedSql = "SELECT x.key FROM parquet_t1 x JOIN parquet_t1 y ON x.key = y.key"
-
-    val df1 = sqlContext.table("parquet_t1").as("x")
-    val df2 = sqlContext.table("parquet_t1").as("y")
-    val joinPlan = df1.join(df2).queryExecution.analyzed
-
-    // Make sure we have a plain Join operator without Project on top of it.
-    assert(joinPlan.isInstanceOf[Join])
-    checkPlan(joinPlan, sqlContext, expectedSql)
   }
 
   test("case") {
@@ -373,6 +330,10 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
     checkHiveQl("SELECT id FROM parquet_t0 DISTRIBUTE BY id SORT BY id")
   }
 
+  test("SPARK-13720: sort by after having") {
+    checkHiveQl("SELECT COUNT(value) FROM parquet_t1 GROUP BY key HAVING MAX(key) > 0 SORT BY key")
+  }
+
   test("distinct aggregation") {
     checkHiveQl("SELECT COUNT(DISTINCT id) FROM parquet_t0")
   }
@@ -408,9 +369,7 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
     checkHiveQl("SELECT * FROM parquet_t0 TABLESAMPLE(0.1 PERCENT) WHERE 1=0")
   }
 
-  // TODO Enable this
-  // Query plans transformed by DistinctAggregationRewriter are not recognized yet
-  ignore("multi-distinct columns") {
+  test("multi-distinct columns") {
     checkHiveQl("SELECT a, COUNT(DISTINCT b), COUNT(DISTINCT c), SUM(d) FROM parquet_t2 GROUP BY a")
   }
 
@@ -485,5 +444,110 @@ class LogicalPlanToSQLSuite extends SQLBuilderTest with SQLTestUtils {
       """.stripMargin,
       "f1", "b[0].f1", "f1", "c[foo]", "d[0]"
     )
+  }
+
+  test("window basic") {
+    checkHiveQl("SELECT MAX(value) OVER (PARTITION BY key % 3) FROM parquet_t1")
+    checkHiveQl(
+      """
+         |SELECT key, value, ROUND(AVG(key) OVER (), 2)
+         |FROM parquet_t1 ORDER BY key
+      """.stripMargin)
+    checkHiveQl(
+      """
+         |SELECT value, MAX(key + 1) OVER (PARTITION BY key % 5 ORDER BY key % 7) AS max
+         |FROM parquet_t1
+      """.stripMargin)
+  }
+
+  test("multiple window functions in one expression") {
+    checkHiveQl(
+      """
+        |SELECT
+        |  MAX(key) OVER (ORDER BY key DESC, value) / MIN(key) OVER (PARTITION BY key % 3)
+        |FROM parquet_t1
+      """.stripMargin)
+  }
+
+  test("regular expressions and window functions in one expression") {
+    checkHiveQl("SELECT MAX(key) OVER (PARTITION BY key % 3) + key FROM parquet_t1")
+  }
+
+  test("aggregate functions and window functions in one expression") {
+    checkHiveQl("SELECT MAX(c) + COUNT(a) OVER () FROM parquet_t2 GROUP BY a, b")
+  }
+
+  test("window with different window specification") {
+    checkHiveQl(
+      """
+         |SELECT key, value,
+         |DENSE_RANK() OVER (ORDER BY key, value) AS dr,
+         |MAX(value) OVER (PARTITION BY key ORDER BY key ASC) AS max
+         |FROM parquet_t1
+      """.stripMargin)
+  }
+
+  test("window with the same window specification with aggregate + having") {
+    checkHiveQl(
+      """
+         |SELECT key, value,
+         |MAX(value) OVER (PARTITION BY key % 5 ORDER BY key DESC) AS max
+         |FROM parquet_t1 GROUP BY key, value HAVING key > 5
+      """.stripMargin)
+  }
+
+  test("window with the same window specification with aggregate functions") {
+    checkHiveQl(
+      """
+         |SELECT key, value,
+         |MAX(value) OVER (PARTITION BY key % 5 ORDER BY key) AS max
+         |FROM parquet_t1 GROUP BY key, value
+      """.stripMargin)
+  }
+
+  test("window with the same window specification with aggregate") {
+    checkHiveQl(
+      """
+         |SELECT key, value,
+         |DENSE_RANK() OVER (DISTRIBUTE BY key SORT BY key, value) AS dr,
+         |COUNT(key)
+         |FROM parquet_t1 GROUP BY key, value
+      """.stripMargin)
+  }
+
+  test("window with the same window specification without aggregate and filter") {
+    checkHiveQl(
+      """
+         |SELECT key, value,
+         |DENSE_RANK() OVER (DISTRIBUTE BY key SORT BY key, value) AS dr,
+         |COUNT(key) OVER(DISTRIBUTE BY key SORT BY key, value) AS ca
+         |FROM parquet_t1
+      """.stripMargin)
+  }
+
+  test("window clause") {
+    checkHiveQl(
+      """
+         |SELECT key, MAX(value) OVER w1 AS MAX, MIN(value) OVER w2 AS min
+         |FROM parquet_t1
+         |WINDOW w1 AS (PARTITION BY key % 5 ORDER BY key), w2 AS (PARTITION BY key % 6)
+      """.stripMargin)
+  }
+
+  test("special window functions") {
+    checkHiveQl(
+      """
+        |SELECT
+        |  RANK() OVER w,
+        |  PERCENT_RANK() OVER w,
+        |  DENSE_RANK() OVER w,
+        |  ROW_NUMBER() OVER w,
+        |  NTILE(10) OVER w,
+        |  CUME_DIST() OVER w,
+        |  LAG(key, 2) OVER w,
+        |  LEAD(key, 2) OVER w
+        |FROM parquet_t1
+        |WINDOW w AS (PARTITION BY key % 5 ORDER BY key)
+      """.stripMargin)
   }
 }
