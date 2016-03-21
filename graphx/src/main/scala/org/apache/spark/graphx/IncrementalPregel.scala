@@ -24,7 +24,7 @@ import scala.collection.immutable.HashMap
 import scala.reflect.ClassTag
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.Logging
+import org.apache.spark.internal.Logging
 
 
 // TODO write document
