@@ -20,15 +20,15 @@ package org.apache.spark.graphx.impl
 import scala.collection.immutable.HashMap
 import scala.reflect.ClassTag
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.graphx._
+import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 
 private[graphx]
-class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] (
-    @transient val _graph: Graph[HashMap[Int, VD], ED],
-    val _partitionStorategy: PartitionStrategy,
+class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
+    val _graph: Graph[HashMap[Int, VD], ED],
+    val _partitionStrategy: PartitionStrategy,
     val _initialMsg: A,
     val _maxIterations: Int = Int.MaxValue,
     val _activeDirection: EdgeDirection = EdgeDirection.Either) (
@@ -37,10 +37,8 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] (
     val _mergeMsg: (A, A) => A)
   extends IncrementalPregel[VD, ED, A] with Serializable {
 
-  /** Default constructor is provided to support serialization */
+  /* Default constructor is provided to support serialization */
   protected def this() = this(null, null, null.asInstanceOf[A])(null, null, null)
-
-  @transient override val graphWithHistory: Graph[HashMap[Int, VD], ED] = _graph
 
   @transient override lazy val result: Graph[VD, ED] = {
     _graph.mapVertices{ case (vertexId, vertexValueHistory) =>
@@ -48,25 +46,23 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] (
     }
   }
 
-  override def run(addEdges: RDD[Edge[ED]], defaultValue: VD, test: A,
-      partitionStrategy: PartitionStrategy = PartitionStrategy.RandomVertexCut)
+  override def run(addEdges: RDD[Edge[ED]], defaultValue: VD)
   : IncrementalPregel[VD, ED, A] = {
-    // TODO Implement Pruning Optmization
-
-    require(partitionStrategy == _partitionStorategy,
-      s"PartitionStrategy ${partitionStrategy} must be same as ${_partitionStorategy}")
+    // TODO Implement Pruning optimization
 
     val initValue = IncrementalPregelImpl.initValue
     val currValue = IncrementalPregelImpl.currValue
 
     def vProgramAndStore(i: Int)(id: VertexId, valueHistory: HashMap[Int, VD], message: A)
     : HashMap[Int, VD] = {
+      // TODO the algorithm becomes more complicated for delete or update vertex
       val newVertexValue = _vprog(id, valueHistory(currValue), message)
       valueHistory + (i -> newVertexValue) + (currValue -> newVertexValue)
     }
 
     def sendMessage(i: Int)(edgeTriplet: EdgeTriplet[HashMap[Int, VD], ED])
     : Iterator[(VertexId, A)] = {
+      // TODO the algorithm bacomes more complicated for delete or update vertex
       val edgeTripletWithSingleValue = new EdgeTriplet[VD, ED].set(edgeTriplet)
       edgeTripletWithSingleValue.srcAttr = edgeTriplet.srcAttr.getOrElse(i, defaultValue)
       edgeTripletWithSingleValue.dstAttr = edgeTriplet.dstAttr.getOrElse(i, defaultValue)
@@ -75,7 +71,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] (
 
     // Add Edges
     val newGraph = _graph.addEdges(addEdges,
-      HashMap(initValue -> defaultValue, currValue -> defaultValue), partitionStrategy).cache()
+      HashMap(initValue -> defaultValue, currValue -> defaultValue), _partitionStrategy).cache()
 
     // Initiate new vertices with initial message
     val initMsg = newGraph.vertices
@@ -121,7 +117,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] (
     inMessages.unpersist(false)
 
     new IncrementalPregelImpl(
-      graph, _partitionStorategy, _initialMsg, _maxIterations, _activeDirection) (
+      graph, _partitionStrategy, _initialMsg, _maxIterations, _activeDirection) (
       _vprog, _sendMsg, _mergeMsg)
   }
 
