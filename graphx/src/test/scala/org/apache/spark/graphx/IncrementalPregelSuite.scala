@@ -17,6 +17,8 @@
 
 package org.apache.spark.graphx
 
+import org.apache.spark.graphx.impl.IncrementalPregelImpl
+
 import scala.collection.immutable.HashMap
 
 import org.apache.spark.SparkFunSuite
@@ -60,7 +62,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       val currValue = -2
       val initValue = -1
-      assert(iPregel.graphWithHistory.vertices.collect.toSet ===
+      assert(iPregel.asInstanceOf[IncrementalPregelImpl[Int, Int, Int]]._graph.vertices.collect.toSet ===
         Set((1, HashMap(currValue -> 1, initValue -> 0, 0 -> 1)),
             (2, HashMap(currValue -> 1, initValue -> 0, 0 -> 2, 1 -> 1)),
             (3, HashMap(currValue -> 1, initValue -> 0, 0 -> 3, 1 -> 2, 2 -> 1)),
@@ -117,7 +119,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       //     1 -> 1 -> 0 -> 0 -> 0  (iteration 3)
       //     1 -> 1 -> 0 -> 0 -> 0  (iteration 4)
       val addEdges = sc.parallelize(Array(Edge(0, 3, 0)))
-      val updated = iPregel.run(addEdges, 0, 0).cache()
+      val updated = iPregel.run(addEdges, 0).cache()
 
       assert(updated.result.vertices.collect().toSet ===
         Set((1, 1), (2, 1), (3, 0), (4, 0), (5, 0), (0, 0))

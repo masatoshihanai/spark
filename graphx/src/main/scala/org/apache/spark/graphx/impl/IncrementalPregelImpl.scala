@@ -73,48 +73,54 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     val newGraph = _graph.addEdges(addEdges,
       HashMap(initValue -> defaultValue, currValue -> defaultValue), _partitionStrategy).cache()
 
-    // Initiate new vertices with initial message
-    val initMsg = newGraph.vertices
+    // TODO what happened if the additional vertex is src?
+    // Initiate src vertices with initial message
+    val initMessagesToSrc = newGraph.vertices
       .aggregateUsingIndex(addEdges.map(x => (x.srcId, _initialMsg)), _mergeMsg)
-    var graph = newGraph.joinVertices(initMsg)(vProgramAndStore(0)).cache()
+    var graph = newGraph.joinVertices(initMessagesToSrc)(vProgramAndStore(0)).cache()
 
-    // Activate neighbor vertices with initial messages
-    val activateMessages = graph.vertices
+    // Initiate dst vertices with initial messages
+    val initMessagesToDst = graph.vertices
       .aggregateUsingIndex(addEdges.map(x => (x.dstId, _initialMsg)), _mergeMsg)
-    var activeMessages = activateMessages.count()
+    var messageCount = initMessagesToDst.count()
 
     // Send messages to neighbors
     var messages = GraphXUtils.mapReduceTriplets(
-      graph, sendMessage(0), _mergeMsg, Some(activateMessages, _activeDirection))
+      graph, sendMessage(0), _mergeMsg, Some(initMessagesToDst, _activeDirection))
 
-    var outMessages = messages.minus(activateMessages)
-    var inMessages = messages.minus(outMessages)
+    // activateMessages for activate out-going neighbors in next iteration
+    var activateMessages = messages.minus(initMessagesToDst)
+    // vProgComputeMessages for compute vertex program in this iteration
+    var vProgComputeMessages = messages.minus(activateMessages)
 
     var i = 1
     var oldGraph: Graph[HashMap[PartitionID, VD], ED] = null
-    while (activeMessages > 0 && i < _maxIterations) {
+    while (messageCount > 0 && i < _maxIterations) {
       oldGraph = graph
-      graph = oldGraph.joinVertices(inMessages)(vProgramAndStore(i))
+      // Compute vertex program with vProgComputeMessages
+      graph = oldGraph.joinVertices(vProgComputeMessages)(vProgramAndStore(i))
 
       val oldMessages = messages
+      // Send messages to vertices filtered by activateMessages
       messages = GraphXUtils.mapReduceTriplets(
-        graph, sendMessage(i), _mergeMsg, Some(outMessages, _activeDirection))
+        graph, sendMessage(i), _mergeMsg, Some(activateMessages, _activeDirection))
 
-      val oldOutMessages = outMessages
-      outMessages = messages.minus(oldOutMessages)
-      val oldInMessages = inMessages
-      inMessages = messages.minus(outMessages)
+      val oldActivateMessages = activateMessages
+      activateMessages = messages.minus(oldActivateMessages)
+      val oldVProgMessages = vProgComputeMessages
+      vProgComputeMessages = messages.minus(activateMessages)
 
-      activeMessages = messages.count()
+      messageCount = messages.count()
       i += 1
+
       oldGraph.unpersist(false)
       oldMessages.unpersist(false)
-      oldOutMessages.unpersist(false)
-      oldInMessages.unpersist(false)
+      oldActivateMessages.unpersist(false)
+      oldVProgMessages.unpersist(false)
     }
     messages.unpersist(false)
-    outMessages.unpersist(false)
-    inMessages.unpersist(false)
+    activateMessages.unpersist(false)
+    vProgComputeMessages.unpersist(false)
 
     new IncrementalPregelImpl(
       graph, _partitionStrategy, _initialMsg, _maxIterations, _activeDirection) (
