@@ -104,7 +104,10 @@ class EdgePartition[
   }
 
   /** Return a new `EdgePartition` with this edge partition and additional edges */
-  def withAdditionalEdges(additionalEdgesItr: Iterator[Edge[ED]], defaultValue: VD)
+  def withAdditionalEdges(
+      additionalEdgesItr: Iterator[Edge[ED]],
+      defaultValue: VD,
+      initVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata)
   : EdgePartition[ED, VD] = {
     val addEdges = additionalEdgesItr.toArray
     new Sorter(Edge.edgeArraySortDataFormat[ED])
@@ -231,8 +234,14 @@ class EdgePartition[
     }
 
     // Add new vertex attributes
-    val newVertexAttrs: Array[VD] = Array.fill(newLocal2global.length)(defaultValue)
+    val newVertexAttrs: Array[VD]
+      = Array.fill(newLocal2global.length)(defaultValue)
     System.arraycopy(vertexAttrs, 0, newVertexAttrs, 0, vertexAttrs.length)
+    var k = vertexAttrs.length
+    while (k < newVertexAttrs.length) {
+      newVertexAttrs(k) = initVertexFunc(local2global(k), defaultValue)
+      k += 1
+    }
 
     new EdgePartition(
       newLocalSrcIds, newLocalDstIds, newData, index, global2local, newLocal2global,

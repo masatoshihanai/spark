@@ -300,18 +300,21 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
    * initiated as active.
    *
    * @param addEdges additional edges
+   * @param partitionStrategy for `addEdges`, which must be same as the graph's ones
    * @param defaultVertexValue  defautValue for addition vertices
-   * @param partitionStrategy for `addEdges`, which must be same as the graph's one.
+   * @param initiateVertexFunc initial function which is called for new additional vertices
    *
    * @return the new graph containing `addEdges`
    */
   def addEdges(addEdges: RDD[Edge[ED]],
+      partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
-      partitionStrategy: PartitionStrategy): Graph[VD, ED]
+      initiateVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata
+  ): Graph[VD, ED]
 
   /**
    * Restricts the graph to only the vertices and edges satisfying the predicates. The resulting
-   * subgraph satisifies
+   * subgraph satisfies
    *
    * {{{
    * V' = {v : for all v in V where vpred(v)}

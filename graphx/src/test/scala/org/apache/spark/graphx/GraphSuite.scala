@@ -235,7 +235,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
       val graph = Graph(vertices, edges, 0).partitionBy(PartitionStrategy.RandomVertexCut).cache()
       val addEdge: RDD[Edge[Int]] = sc.parallelize(Array(Edge(2L, 3L, 0)))
 
-      val newGraph = graph.addEdges(addEdge, 99, PartitionStrategy.RandomVertexCut).cache()
+      val newGraph = graph.addEdges(addEdge, PartitionStrategy.RandomVertexCut, 99).cache()
       assert(newGraph.vertices.count == 3)
       assert(newGraph.vertices.collect().toSet === Set((1, 1), (2, 2), (3, 99)))
       assert(newGraph.edges.collect().toSet === Set(Edge(1, 2, 0), Edge(2, 3, 0)))
@@ -256,7 +256,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
       val graph = Graph(vertices, edges, 0).partitionBy(partitionStrategy).cache()
       val addEdge: RDD[Edge[Int]] = sc.parallelize(Array(Edge(1L, 3L, 0)))
 
-      val newGraph = graph.addEdges(addEdge, 99, partitionStrategy).cache()
+      val newGraph = graph.addEdges(addEdge, partitionStrategy, 99).cache()
 
       assert(newGraph.vertices.count == 3)
       assert(newGraph.vertices.collect().toSet === Set((1, 1), (2, 2), (3, 3)))
@@ -266,7 +266,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
 
   test("subgraph") {
     withSpark { sc =>
-      // Create a star graph of 10 veritces.
+      // Create a star graph of 10 vertices.
       val n = 10
       val star = starGraph(sc, n)
       // Take only vertices whose vids are even
