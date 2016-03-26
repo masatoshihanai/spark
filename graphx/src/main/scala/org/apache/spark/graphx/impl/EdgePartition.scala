@@ -107,7 +107,7 @@ class EdgePartition[
   def withAdditionalEdges(
       additionalEdgesItr: Iterator[Edge[ED]],
       defaultValue: VD,
-      initVertexFunc: (VertexId, VD) => VD)
+      initVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata)
   : EdgePartition[ED, VD] = {
     val addEdges = additionalEdgesItr.toArray
     new Sorter(Edge.edgeArraySortDataFormat[ED])

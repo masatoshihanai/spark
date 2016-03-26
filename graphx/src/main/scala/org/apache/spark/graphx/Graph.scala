@@ -303,15 +303,13 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
    * @param partitionStrategy for `addEdges`, which must be same as the graph's ones
    * @param defaultVertexValue  defautValue for addition vertices
    * @param initiateVertexFunc initial function which is called for new additional vertices
-   * @param initiateGraphFunc initial function which is called for new additional part of graph
    *
    * @return the new graph containing `addEdges`
    */
   def addEdges(addEdges: RDD[Edge[ED]],
       partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
-      initiateVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata,
-      initiateGraphFunc: Graph[VD, ED] => Graph[VD, ED] = g => g
+      initiateVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata
   ): Graph[VD, ED]
 
   /**

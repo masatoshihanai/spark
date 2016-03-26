@@ -160,8 +160,7 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
   override def addEdges(addEdges: RDD[Edge[ED]],
       partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
-      initVertexFunc: (VertexId, VD) => VD,
-      initGraphFunc: Graph[VD, ED] => Graph[VD, ED]): Graph[VD, ED] = {
+      initVertexFunc: (VertexId, VD) => VD): Graph[VD, ED] = {
     val numPartition = edges.getNumPartitions
     val edgesIterator = addEdges.map { addEdge =>
       val partitionID: PartitionID = partitionStrategy.getPartition(
@@ -173,7 +172,7 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
       Iterator((i, edges))
     }
     GraphImpl.fromEdgesWithExistingGraph(
-      this, edgesIterator, defaultVertexValue, initVertexFunc, initGraphFunc)
+      this, edgesIterator, defaultVertexValue, initVertexFunc)
   }
 
   override def subgraph(
@@ -366,8 +365,7 @@ object GraphImpl {
       existingGraph: Graph[VD, ED],
       additionalEdges: RDD[(PartitionID, Iterator[Edge[ED]])],
       defaultVertexValue: VD,
-      initVertexFunc: (VertexId, VD) => VD,
-      initGraphFunc: Graph[VD, ED] => Graph[VD, ED]): GraphImpl[VD, ED] = {
+      initVertexFunc: (VertexId, VD) => VD): GraphImpl[VD, ED] = {
     // Storage levels of the existing graph are used for a new graph.
     val edgeStorageLevel = existingGraph.edges.getStorageLevel
     val vertexStorageLevel = existingGraph.vertices.getStorageLevel
