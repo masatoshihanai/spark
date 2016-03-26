@@ -17,7 +17,6 @@
 
 package org.apache.spark.graphx.impl
 
-import scala.collection.immutable.HashMap
 import scala.reflect.ClassTag
 
 import org.apache.spark.graphx._
@@ -27,7 +26,7 @@ import org.apache.spark.storage.StorageLevel
 
 private[graphx]
 class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
-    val _graph: Graph[HashMap[Int, VD], ED],
+    val _graph: Graph[Seq[(Int, VD)], ED],
     val _partitionStrategy: PartitionStrategy,
     val _initialMsg: A,
     val _maxIterations: Int = Int.MaxValue,
@@ -42,85 +41,88 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
 
   @transient override lazy val result: Graph[VD, ED] = {
     _graph.mapVertices{ case (vertexId, vertexValueHistory) =>
-      vertexValueHistory(-2)
+      vertexValueHistory.head._2
     }
   }
 
   override def run(addEdges: RDD[Edge[ED]], defaultValue: VD)
   : IncrementalPregel[VD, ED, A] = {
-    // TODO Implement Pruning optimization
-
-    val initValue = IncrementalPregelImpl.initValue
-    val currValue = IncrementalPregelImpl.currValue
-
-    def vProgramAndStore(i: Int)(id: VertexId, valueHistory: HashMap[Int, VD], message: A)
-    : HashMap[Int, VD] = {
-      // TODO the algorithm becomes more complicated for delete or update vertex
-      val newVertexValue = _vprog(id, valueHistory(currValue), message)
-      valueHistory + (i -> newVertexValue) + (currValue -> newVertexValue)
+    def vProgramAndStore(iteration: Int)(
+        id: VertexId, valueHistory: Seq[(Int, VD)], message: A)
+    : Seq[(Int, VD)] = {
+      def rollback(valueHistory: Seq[(Int, VD)]): Seq[(Int, VD)] = {
+        if (valueHistory.head._1 == iteration) valueHistory.tail
+        else if (valueHistory.head._1 < iteration) valueHistory
+        else rollback(valueHistory.tail)
+      }
+      val rollbackedHistory = rollback(valueHistory)
+      val newVertexValue = _vprog(id, rollbackedHistory.head._2, message)
+      (iteration -> newVertexValue) +: rollbackedHistory
     }
 
-    def sendMessage(i: Int)(edgeTriplet: EdgeTriplet[HashMap[Int, VD], ED])
+    def sendMessage(itr: Int)(edgeTriplet: EdgeTriplet[Seq[(Int, VD)], ED])
     : Iterator[(VertexId, A)] = {
-      // TODO the algorithm bacomes more complicated for delete or update vertex
-      val edgeTripletWithSingleValue = new EdgeTriplet[VD, ED].set(edgeTriplet)
-      edgeTripletWithSingleValue.srcAttr = edgeTriplet.srcAttr.getOrElse(i, defaultValue)
-      edgeTripletWithSingleValue.dstAttr = edgeTriplet.dstAttr.getOrElse(i, defaultValue)
-      _sendMsg(edgeTripletWithSingleValue)
+      // TODO try to use index for efficient access (ex. Seq[ItrIndx] and HashMap[(ItrIndx, VD)])
+      def rollback(valueHistory: Seq[(Int, VD)]): Seq[(Int, VD)] = {
+        if (valueHistory.head._1 == itr) valueHistory
+        else if (valueHistory.head._1 < itr) valueHistory
+        else rollback(valueHistory.tail)
+      }
+      val et = new EdgeTriplet[VD, ED].set(edgeTriplet)
+      et.srcAttr = rollback(edgeTriplet.srcAttr).head._2
+      et.dstAttr = rollback(edgeTriplet.dstAttr).head._2
+      // Ignore messages from an origin which does not have any history.
+      _sendMsg(et).flatMap { case (vid, msg) =>
+        if (vid == et.srcId && (edgeTriplet.dstAttr.head._1 < itr)) Iterator.empty
+        else if (vid == et.dstId && (edgeTriplet.srcAttr.head._1 < itr)) Iterator.empty
+        else Iterator((vid, msg))
+      }
     }
 
-    // Add Edges
-    val newGraph = _graph.addEdges(addEdges,
-      HashMap(initValue -> defaultValue, currValue -> defaultValue), _partitionStrategy).cache()
+    def sendNull(edgeTriplet: EdgeTriplet[Seq[(Int, VD)], ED])
+    : Iterator[(VertexId, Byte)] = {
+      if (_activeDirection == EdgeDirection.Out) {
+        Iterator((edgeTriplet.dstId, 1.toByte))
+      } else { // _activeDirection == EdgeDirection.Either
+        Iterator((edgeTriplet.srcId, 1.toByte), (edgeTriplet.dstId, 1.toByte))
+      }
+    }
 
-    // TODO what happened if the additional vertex is src?
-    // Initiate src vertices with initial message
-    val initMessagesToSrc = newGraph.vertices
-      .aggregateUsingIndex(addEdges.map(x => (x.srcId, _initialMsg)), _mergeMsg)
-    var graph = newGraph.joinVertices(initMessagesToSrc)(vProgramAndStore(0)).cache()
+    def mergeNull(msg1: Byte, msg2: Byte): Byte = 1.toByte
 
-    // Initiate dst vertices with initial messages
-    val initMessagesToDst = graph.vertices
-      .aggregateUsingIndex(addEdges.map(x => (x.dstId, _initialMsg)), _mergeMsg)
-    var messageCount = initMessagesToDst.count()
+    // Add Edges with defaultValue
+    var graph = _graph.addEdges(addEdges, Seq(-1 -> defaultValue), _partitionStrategy).cache()
 
-    // Send messages to neighbors
-    var messages = GraphXUtils.mapReduceTriplets(
-      graph, sendMessage(0), _mergeMsg, Some(initMessagesToDst, _activeDirection))
+    // Send _initialMsg to initial vertices
+    var vProgMsg = graph.vertices.aggregateUsingIndex(
+      addEdges.map(x => ((x.srcId, _initialMsg), (x.dstId, _initialMsg)))
+        .flatMap(x => Iterator(x._1, x._2)): RDD[(VertexId, A)], _mergeMsg).cache()
+    var messageCount = vProgMsg.count
 
-    // activateMessages for activate out-going neighbors in next iteration
-    var activateMessages = messages.minus(initMessagesToDst)
-    // vProgComputeMessages for compute vertex program in this iteration
-    var vProgComputeMessages = messages.minus(activateMessages)
-
-    var i = 1
-    var oldGraph: Graph[HashMap[PartitionID, VD], ED] = null
+    var i = 0
+    var oldGraph: Graph[Seq[(PartitionID, VD)], ED] = null
     while (messageCount > 0 && i < _maxIterations) {
       oldGraph = graph
-      // Compute vertex program with vProgComputeMessages
-      graph = oldGraph.joinVertices(vProgComputeMessages)(vProgramAndStore(i))
+      // Compute vertex program with vProgMsg
+      graph = graph.joinVertices(vProgMsg)(vProgramAndStore(i)).cache()
 
-      val oldMessages = messages
-      // Send messages to vertices filtered by activateMessages
-      messages = GraphXUtils.mapReduceTriplets(
-        graph, sendMessage(i), _mergeMsg, Some(activateMessages, _activeDirection))
+      // Send activate messages to destination neighbors
+      val activateMsg = GraphXUtils.mapReduceTriplets(
+        graph, sendNull, mergeNull, Some(vProgMsg, _activeDirection)).cache()
 
-      val oldActivateMessages = activateMessages
-      activateMessages = messages.minus(oldActivateMessages)
-      val oldVProgMessages = vProgComputeMessages
-      vProgComputeMessages = messages.minus(activateMessages)
+      // Pull messages from the neighbors' origin
+      val oldVProgMsg = vProgMsg
+      vProgMsg = GraphXUtils.mapReduceTriplets(
+        graph, sendMessage(i), _mergeMsg, Some(activateMsg, _activeDirection.reverse)).cache()
 
-      messageCount = messages.count()
+      messageCount = vProgMsg.count()
       i += 1
 
-      oldGraph.unpersist(false)
-      oldMessages.unpersist(false)
-      oldActivateMessages.unpersist(false)
-      oldVProgMessages.unpersist(false)
+      oldGraph.unpersistVertices(false)
+      oldGraph.edges.unpersist(false)
+      oldVProgMsg.unpersist(false)
     }
-    messages.unpersist(false)
-    activateMessages.unpersist(false)
-    vProgComputeMessages.unpersist(false)
+    vProgMsg.unpersist(false)
 
     new IncrementalPregelImpl(
       graph, _partitionStrategy, _initialMsg, _maxIterations, _activeDirection) (
@@ -171,33 +173,31 @@ object IncrementalPregelImpl extends Logging {
       mergeMsg: (A, A) => A)
     : IncrementalPregelImpl[VD, ED, A] =
   {
-    def vProgramAndStore(i: Int)(id: VertexId, valueHistory: HashMap[Int, VD], message: A)
-      : HashMap[Int, VD] = {
-      val newVertexValue = vprog(id, valueHistory(currValue), message)
-      valueHistory + (i -> newVertexValue) + (currValue -> newVertexValue)
+    def vProgramAndStore(i: Int)(id: VertexId, valueHistory: Seq[(Int, VD)], message: A)
+      : Seq[(Int, VD)] = {
+      val newVertexValue = vprog(id, valueHistory.head._2, message)
+      (i -> newVertexValue) +: valueHistory
     }
 
-    def sendMessage(edgeTriplet: EdgeTriplet[HashMap[Int, VD], ED]): Iterator[(VertexId, A)] = {
+    def sendMessage(edgeTriplet: EdgeTriplet[Seq[(Int, VD)], ED]): Iterator[(VertexId, A)] = {
       val edgeTripletWithSingleValue = new EdgeTriplet[VD, ED].set(edgeTriplet)
-      edgeTripletWithSingleValue.srcAttr = edgeTriplet.srcAttr(currValue)
-      edgeTripletWithSingleValue.dstAttr = edgeTriplet.dstAttr(currValue)
+      edgeTripletWithSingleValue.srcAttr = edgeTriplet.srcAttr.head._2
+      edgeTripletWithSingleValue.dstAttr = edgeTriplet.dstAttr.head._2
       sendMsg(edgeTripletWithSingleValue)
     }
 
-    var graphWithHistory
-      = graph.partitionBy(partitionStorategy)
-        .mapVertices((_, vData) => HashMap((currValue -> vData), (initValue -> vData)))
-
-    graphWithHistory = graphWithHistory.mapVertices { (vid, vdata) =>
-      vProgramAndStore(0)(vid, vdata, initialMsg)
-    }.cache()
+    var graphWithHistory = graph.partitionBy(partitionStorategy)
+      .mapVertices((_, vData) => Seq(-1 -> vData))
+      .mapVertices { (vid, vdata) =>
+        vProgramAndStore(0)(vid, vdata, initialMsg)
+      }.cache()
 
     var messages = GraphXUtils.mapReduceTriplets(graphWithHistory, sendMessage, mergeMsg)
-    var activeMessages = messages.count()
+    var messageCount = messages.count
 
-    var prevG: Graph[HashMap[Int, VD], ED] = null
+    var prevG: Graph[Seq[(Int, VD)], ED] = null
     var i = 1
-    while (activeMessages > 0 && i < maxIterations) {
+    while (messageCount > 0 && i < maxIterations) {
       prevG = graphWithHistory
       graphWithHistory = graphWithHistory.joinVertices(messages)(vProgramAndStore(i)).cache()
 
@@ -205,7 +205,7 @@ object IncrementalPregelImpl extends Logging {
       messages = GraphXUtils.mapReduceTriplets(
         graphWithHistory, sendMessage, mergeMsg, Some((oldMessages, activeDirection))).cache()
 
-      activeMessages = messages.count()
+      messageCount = messages.count
 
       oldMessages.unpersist(blocking = false)
       prevG.unpersistVertices(blocking = false)
@@ -218,8 +218,5 @@ object IncrementalPregelImpl extends Logging {
       graphWithHistory, partitionStorategy, initialMsg, maxIterations, activeDirection) (
       vprog, sendMsg, mergeMsg)
   }
-
-  private val currValue = -2
-  private val initValue = -1
 
 } // end to object IncrementalPregelImpl
