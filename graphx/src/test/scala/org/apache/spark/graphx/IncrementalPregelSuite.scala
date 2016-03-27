@@ -124,7 +124,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       // Check with original pregel
       val fullResult = chain.partitionBy(PartitionStrategy.RandomVertexCut)
-        .addEdges(addEdges, 0, PartitionStrategy.RandomVertexCut)
+        .addEdges(addEdges, PartitionStrategy.RandomVertexCut, 0)
         .pregel(Long.MaxValue)(vprog, sendMsg, mergeMsg).cache()
       assert(updated.result.vertices.collect.toSet ===
         fullResult.vertices.collect.toSet)
@@ -168,7 +168,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val ccGraphPlus = gridGraph
         .partitionBy(PartitionStrategy.RandomVertexCut)
         .mapVertices {case (vid, _) => vid }
-        .addEdges(addEdge, 0L, PartitionStrategy.RandomVertexCut).cache()
+        .addEdges(addEdge, PartitionStrategy.RandomVertexCut, 0L).cache()
 
       val pregelGraphPlus
         = Pregel(ccGraphPlus, initialMessage)(vprog, sendMessage, mergeMsg).cache()
@@ -225,7 +225,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       val gridGraphPlus = gridGraph
         .partitionBy(PartitionStrategy.EdgePartition1D)
-        .addEdges(addEdge, (0, 0), PartitionStrategy.EdgePartition1D).cache()
+        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, (0, 0)).cache()
 
       val dynamicRankPlus = gridGraphPlus.pageRank(tol, resetProb).vertices.cache()
       val updated = iPregelRank.run(addEdge, (0.0, 0.0)).cache()

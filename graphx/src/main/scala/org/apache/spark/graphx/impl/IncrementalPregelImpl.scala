@@ -91,7 +91,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     def mergeNull(msg1: Byte, msg2: Byte): Byte = 1.toByte
 
     // Add Edges with defaultValue
-    var graph = _graph.addEdges(addEdges, Seq(-1 -> defaultValue), _partitionStrategy).cache()
+    var graph = _graph.addEdges(addEdges, _partitionStrategy, Seq(-1 -> defaultValue)).cache()
 
     // Send _initialMsg to initial vertices
     var vProgMsg = graph.vertices.aggregateUsingIndex(

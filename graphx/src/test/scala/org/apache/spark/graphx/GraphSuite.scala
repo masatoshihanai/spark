@@ -476,7 +476,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
           addEdge.count()
 
           val startTime = System.currentTimeMillis()
-          val newGraph = line.addEdges(addEdge, "v", partitionStrategy).cache()
+          val newGraph = line.addEdges(addEdge, partitionStrategy, "v").cache()
           newGraph.edges.partitionsRDD.count()
           val endTime = System.currentTimeMillis()
           newGraph.edges.partitionsRDD.count()
@@ -512,7 +512,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
           addEdge.count()
 
           val startTime = System.currentTimeMillis()
-          val newGraph = star.addEdges(addEdge, "v", partitionStrategy).cache()
+          val newGraph = star.addEdges(addEdge, partitionStrategy, "v").cache()
           newGraph.edges.partitionsRDD.count()
           val endTime = System.currentTimeMillis()
           newGraph.edges.partitionsRDD.count()
