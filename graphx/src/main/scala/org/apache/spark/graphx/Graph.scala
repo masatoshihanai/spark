@@ -309,8 +309,7 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
   def addEdges(addEdges: RDD[Edge[ED]],
       partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
-      initiateVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata
-  ): Graph[VD, ED]
+      initiateVertexFunc: (VertexId, VD) => VD = (_, vdata) => vdata): Graph[VD, ED]
 
   /**
    * Restricts the graph to only the vertices and edges satisfying the predicates. The resulting
