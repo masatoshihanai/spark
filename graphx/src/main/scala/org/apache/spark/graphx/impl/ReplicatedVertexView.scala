@@ -117,4 +117,37 @@ class ReplicatedVertexView[VD: ClassTag, ED: ClassTag](
     })
     new ReplicatedVertexView(newEdges, hasSrcId, hasDstId)
   }
+
+  /**
+   * TODO document
+   */
+  def updateEdges(updates: VertexRDD[VD], edgeDirection: EdgeDirection,
+      mapFunc: EdgeTriplet[VD, ED] => ED): ReplicatedVertexView[VD, ED] = {
+    val shippedVerts = updates.shipVertexIds()
+      .partitionBy(edges.partitioner.get)
+
+    val newEdges = edges.withPartitionsRDD(edges.partitionsRDD.zipPartitions(shippedVerts) {
+      (ePartIter, shippedVertsIter) => ePartIter.map {
+        case (pid, edgePartition) =>
+          if (edgeDirection == EdgeDirection.Either) {
+            (pid, edgePartition.updateEdges(
+              shippedVertsIter.flatMap(_._2.iterator), EdgeActiveness.Either, mapFunc))
+          } else if (edgeDirection == EdgeDirection.Out) {
+            (pid, edgePartition.updateEdgesWithIndex(
+              shippedVertsIter.flatMap(_._2.iterator), EdgeActiveness.SrcOnly, mapFunc))
+          } else if (edgeDirection == EdgeDirection.In) {
+            (pid, edgePartition.updateEdges(
+              shippedVertsIter.flatMap(_._2.iterator), EdgeActiveness.DstOnly, mapFunc))
+          } else if (edgeDirection == EdgeDirection.Both) {
+            (pid, edgePartition.updateEdgesWithIndex(
+              shippedVertsIter.flatMap(_._2.iterator), EdgeActiveness.Both, mapFunc))
+          } else {
+            (pid, edgePartition.updateEdges(
+              shippedVertsIter.flatMap(_._2.iterator), EdgeActiveness.Neither, mapFunc))
+          }
+      }
+    })
+    new ReplicatedVertexView(newEdges, hasSrcId, hasDstId)
+  }
+
 }
