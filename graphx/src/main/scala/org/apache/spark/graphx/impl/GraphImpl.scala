@@ -157,6 +157,13 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
     new GraphImpl(vertices, replicatedVertexView.withEdges(newEdges))
   }
 
+  override def joinTriplets(updates: VertexRDD[VD], edgeDirection: EdgeDirection,
+      mapFunc: EdgeTriplet[VD, ED] => ED): Graph[VD, ED] = {
+    replicatedVertexView.upgrade(vertices, true, true)
+    val newReplicatedVertexView = replicatedVertexView.updateEdges(updates, edgeDirection, mapFunc)
+    new GraphImpl(vertices, newReplicatedVertexView)
+  }
+
   override def addEdges(addEdges: RDD[Edge[ED]],
       partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
@@ -167,10 +174,10 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
         addEdge.srcId, addEdge.dstId, numPartition)
       (partitionID, addEdge)
     }.partitionBy(edges.partitioner.get)
-     .mapPartitionsWithIndex { (i, partitionedEdges) =>
-      val edges: Iterator[Edge[ED]] = partitionedEdges.map(x => x._2)
-      Iterator((i, edges))
-    }
+      .mapPartitionsWithIndex { (i, partitionedEdges) =>
+        val edges: Iterator[Edge[ED]] = partitionedEdges.map(x => x._2)
+        Iterator((i, edges))
+      }
     GraphImpl.fromEdgesWithExistingGraph(
       this, edgesIterator, defaultVertexValue, initVertexFunc)
   }

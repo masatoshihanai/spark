@@ -95,6 +95,99 @@ class EdgePartition[
       activeSet)
   }
 
+  def updateEdges (iter: Iterator[VertexId], activeness: EdgeActiveness,
+      mapFunc: EdgeTriplet[VD, ED] => ED): EdgePartition[ED, VD] = {
+    val newData = new Array[ED](data.length)
+    System.arraycopy(data, 0, newData, 0, data.length)
+
+    val updates = new VertexSet
+    while(iter.hasNext) updates.add(iter.next)
+
+    var i = 0
+    while (i < size) {
+      val localSrcId = localSrcIds(i)
+      val srcId = local2global(localSrcId)
+      val localDstId = localDstIds(i)
+      val dstId = local2global(localDstId)
+      val edgeIsActive =
+        if (activeness == EdgeActiveness.Neither) true
+        else if (activeness == EdgeActiveness.SrcOnly) updates.contains(srcId)
+        else if (activeness == EdgeActiveness.DstOnly) updates.contains(dstId)
+        else if (activeness == EdgeActiveness.Both)
+          updates.contains(srcId) && updates.contains(dstId)
+        else if (activeness == EdgeActiveness.Either)
+          updates.contains(srcId) || updates.contains(dstId)
+        else throw new Exception("unreachable")
+      if (edgeIsActive) {
+        val edgeTriplet = new EdgeTriplet[VD, ED]
+        edgeTriplet.srcId = srcId
+        edgeTriplet.dstId = dstId
+        edgeTriplet.srcAttr = vertexAttrs(localSrcId)
+        edgeTriplet.dstAttr = vertexAttrs(localDstId)
+        newData(i) = mapFunc(edgeTriplet)
+      }
+      i += 1
+    }
+    new EdgePartition(
+      localSrcIds, localDstIds, newData, index, global2local, local2global, vertexAttrs,
+      activeSet)
+  }
+
+  /** TODO document */
+  def updateEdgesWithIndex(iter: Iterator[VertexId], activeness: EdgeActiveness,
+      mapFunc: EdgeTriplet[VD, ED] => ED): EdgePartition[ED, VD] = {
+    val newData = new Array[ED](data.length)
+    System.arraycopy(data, 0, newData, 0, data.length)
+
+    val updates = new VertexSet
+    while(iter.hasNext) updates.add(iter.next)
+
+    index.iterator.foreach { cluster =>
+      val clusterSrcId = cluster._1
+      val clusterPos = cluster._2
+      val clusterLocalSrcId = localSrcIds(clusterPos)
+
+      val scanCluster =
+        if (activeness == EdgeActiveness.Neither) true
+        else if (activeness == EdgeActiveness.SrcOnly) updates.contains(clusterSrcId)
+        else if (activeness == EdgeActiveness.DstOnly) true
+        else if (activeness == EdgeActiveness.Both) updates.contains(clusterSrcId)
+        else if (activeness == EdgeActiveness.Either) true
+        else throw new Exception("unreachable")
+
+      if (scanCluster) {
+        var pos = clusterPos
+        val srcAttr = vertexAttrs(clusterLocalSrcId)
+        while (pos < size && localSrcIds(pos) == clusterLocalSrcId) {
+          val localDstId = localDstIds(pos)
+          val dstId = local2global(localDstId)
+          val edgeIsActive =
+            if (activeness == EdgeActiveness.Neither) true
+            else if (activeness == EdgeActiveness.SrcOnly) true
+            else if (activeness == EdgeActiveness.DstOnly) updates.contains(dstId)
+            else if (activeness == EdgeActiveness.Both) updates.contains(dstId)
+            else if (activeness == EdgeActiveness.Either)
+              updates.contains(clusterSrcId) || updates.contains(dstId)
+            else throw new Exception("unreachable")
+          if (edgeIsActive) {
+            val dstAttr = vertexAttrs(localDstId)
+            val edgeTriplet = new EdgeTriplet[VD, ED]
+            edgeTriplet.srcId = clusterSrcId
+            edgeTriplet.dstId = dstId
+            edgeTriplet.srcAttr = srcAttr
+            edgeTriplet.dstAttr = dstAttr
+            newData(pos) = mapFunc(edgeTriplet)
+          }
+          pos += 1
+        }
+      }
+    }
+
+    new EdgePartition(
+      localSrcIds, localDstIds, newData, index, global2local, local2global, vertexAttrs,
+      activeSet)
+  }
+
   /** Return a new `EdgePartition` without any locally cached vertex attributes. */
   def withoutVertexAttributes[VD2: ClassTag](): EdgePartition[ED, VD2] = {
     val newVertexAttrs = new Array[VD2](vertexAttrs.length)
