@@ -157,6 +157,13 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
     new GraphImpl(vertices, replicatedVertexView.withEdges(newEdges))
   }
 
+  override def joinTriplets(updates: VertexRDD[VD], edgeDirection: EdgeDirection,
+      mapFunc: EdgeTriplet[VD, ED] => ED): Graph[VD, ED] = {
+    replicatedVertexView.upgrade(vertices, true, true)
+    val newReplicatedVertexView = replicatedVertexView.updateEdges(updates, edgeDirection, mapFunc)
+    new GraphImpl(vertices, newReplicatedVertexView)
+  }
+
   override def subgraph(
       epred: EdgeTriplet[VD, ED] => Boolean = x => true,
       vpred: (VertexId, VD) => Boolean = (a, b) => true): Graph[VD, ED] = {
