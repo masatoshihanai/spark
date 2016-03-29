@@ -288,6 +288,11 @@ object SQLConf {
     defaultValue = Some(true),
     doc = "Whether the query analyzer should be case sensitive or not.")
 
+  val PARQUET_FILE_SCAN = booleanConf("spark.sql.parquet.fileScan",
+    defaultValue = Some(true),
+    doc = "Use the new FileScanRDD path for reading parquet data.",
+    isPublic = false)
+
   val PARQUET_SCHEMA_MERGING_ENABLED = booleanConf("spark.sql.parquet.mergeSchema",
     defaultValue = Some(false),
     doc = "When true, the Parquet data source merges schemas collected from all data files, " +
@@ -365,7 +370,7 @@ object SQLConf {
           "unmatching partitions can be eliminated earlier.")
 
   val NATIVE_VIEW = booleanConf("spark.sql.nativeView",
-    defaultValue = Some(false),
+    defaultValue = Some(true),
     doc = "When true, CREATE VIEW will be handled by Spark SQL instead of Hive native commands.  " +
           "Note that this function is experimental and should ony be used when you are using " +
           "non-hive-compatible tables written by Spark SQL.  The SQL string used to create " +
@@ -439,6 +444,11 @@ object SQLConf {
     defaultValue = Some(true),
     doc = "When true, the ordinal numbers are treated as the position in the select list. " +
           "When false, the ordinal numbers in order/sort By clause are ignored.")
+
+  val GROUP_BY_ORDINAL = booleanConf("spark.sql.groupByOrdinal",
+    defaultValue = Some(true),
+    doc = "When true, the ordinal numbers in group by clauses are treated as the position " +
+      "in the select list. When false, the ordinal numbers are ignored.")
 
   // The output committer class used by HadoopFsRelation. The specified class needs to be a
   // subclass of org.apache.hadoop.mapreduce.OutputCommitter.
@@ -519,6 +529,24 @@ object SQLConf {
     doc = "When true, the planner will try to find out duplicated exchanges and re-use them.",
     isPublic = false)
 
+  val STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT = intConf(
+    "spark.sql.streaming.stateStore.minDeltasForSnapshot",
+    defaultValue = Some(10),
+    doc = "Minimum number of state store delta files that needs to be generated before they " +
+      "consolidated into snapshots.",
+    isPublic = false)
+
+  val STATE_STORE_MIN_VERSIONS_TO_RETAIN = intConf(
+    "spark.sql.streaming.stateStore.minBatchesToRetain",
+    defaultValue = Some(2),
+    doc = "Minimum number of versions of a state store's data to retain after cleaning.",
+    isPublic = false)
+
+  val CHECKPOINT_LOCATION = stringConf("spark.sql.streaming.checkpointLocation",
+    defaultValue = None,
+    doc = "The default location for storing checkpoint data for continuously executing queries.",
+    isPublic = true)
+
   object Deprecated {
     val MAPRED_REDUCE_TASKS = "mapred.reduce.tasks"
     val EXTERNAL_SORT = "spark.sql.planner.externalSort"
@@ -549,11 +577,15 @@ class SQLConf extends Serializable with CatalystConf with ParserConf with Loggin
 
   /** ************************ Spark SQL Params/Hints ******************* */
 
+  def checkpointLocation: String = getConf(CHECKPOINT_LOCATION)
+
   def filesMaxPartitionBytes: Long = getConf(FILES_MAX_PARTITION_BYTES)
 
   def useCompression: Boolean = getConf(COMPRESS_CACHED)
 
   def parquetCompressionCodec: String = getConf(PARQUET_COMPRESSION)
+
+  def parquetFileScan: Boolean = getConf(PARQUET_FILE_SCAN)
 
   def parquetCacheMetadata: Boolean = getConf(PARQUET_CACHE_METADATA)
 
@@ -641,6 +673,7 @@ class SQLConf extends Serializable with CatalystConf with ParserConf with Loggin
 
   override def orderByOrdinal: Boolean = getConf(ORDER_BY_ORDINAL)
 
+  override def groupByOrdinal: Boolean = getConf(GROUP_BY_ORDINAL)
   /** ********************** SQLConf functionality methods ************ */
 
   /** Set Spark SQL configuration properties. */
