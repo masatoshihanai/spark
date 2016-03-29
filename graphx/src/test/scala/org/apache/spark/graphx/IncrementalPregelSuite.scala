@@ -20,7 +20,9 @@ package org.apache.spark.graphx
 import org.apache.spark.graphx.impl.IncrementalPregelImpl
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.graphx.lib.ShortestPaths
 import org.apache.spark.graphx.util.GraphGenerators
+import org.apache.spark.rdd.RDD
 
 class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
@@ -195,12 +197,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val tol = 0.0001; val errorTol = 1.0e-5
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
 
-      val pagerankGraph = gridGraph
-        .outerJoinVertices(gridGraph.outDegrees) {(_, _, deg) => deg.getOrElse(0)}
-        .mapTriplets( e => 1.0 / e.srcAttr )
-        .mapVertices {(id, attr) => (0.0, 0.0)}
-        .cache()
-
+      // Three functions for pagerank with Pregel
       val vertexProgram = (id: VertexId, attr: (Double, Double), msgSum: Double) => {
         val (oldPR, lastDelta) = attr
         val newPR = oldPR + (1.0 - resetProb) * msgSum
@@ -215,31 +212,95 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       }
       val messageCombiner = (a: Double, b: Double) => a + b
 
+      // Init graph for pagerank
+      val pagerankGraph = gridGraph
+        .outerJoinVertices(gridGraph.outDegrees) {(_, _, deg) => deg.getOrElse(0)}
+        .mapTriplets( e => 1.0 / e.srcAttr )
+        .mapVertices {(id, attr) => (0.0, 0.0)}
+        .cache()
+
+      // Initial Run
       val iPregelRank = IncrementalPregel(pagerankGraph, resetProb / (1.0 - resetProb),
         activeDirection = EdgeDirection.Out)(vertexProgram, sendMessage, messageCombiner).cache()
 
+      // Init additional edges
       val addEdge = sc.parallelize(
         (0 until rows).map(x => Edge(rows * cols + x, x, 1.0))
-        //++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
+        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
       ).cache()
 
+      // For updating edge attribute (number of out degrees)
+      val initEdgeAttr = (g: Graph[_, Double]) => {
+        val activateMsg = VertexRDD(addEdge.flatMap(x => Iterator((x.srcId, 0), (x.dstId, 0))))
+          .withPartitionsRDD(g.vertices.partitionsRDD).cache()
+
+        val countOutDeg = (edge: EdgeTriplet[_, Double]) => Iterator((edge.srcId, 1))
+        val mergeMsg = (x: Int, y: Int) => x + y
+        val updatedOutDeg = GraphXUtils.mapReduceTriplets(
+          g, countOutDeg, mergeMsg, Some(activateMsg, EdgeDirection.Either)).cache()
+
+        val updatedGraph = g.joinTriplets[Int](
+          updatedOutDeg, EdgeDirection.Either, et => 1.0 / et.srcAttr).cache()
+        (updatedGraph, updatedOutDeg)
+      }
+      // Run incremental Pregel
+      val updated = iPregelRank.run(addEdge, (0.0, 0.0), Some(initEdgeAttr)).cache()
+
+      // Run full version of PageRank
       val gridGraphPlus = gridGraph
         .partitionBy(PartitionStrategy.EdgePartition1D)
         .addEdges(addEdge, PartitionStrategy.EdgePartition1D, (0, 0)).cache()
+      val pagerankFull = gridGraphPlus.pageRank(tol, resetProb).vertices.cache()
 
-      val dynamicRankPlus = gridGraphPlus.pageRank(tol, resetProb).vertices.cache()
-      val updated = iPregelRank.run(addEdge, (0.0, 0.0)).cache()
-
-      assert(compareRanks(dynamicRankPlus,
+      assert(compareRanks(pagerankFull,
         updated.result.mapVertices((vid, attr) => attr._1).vertices) < errorTol)
-      assert(dynamicRankPlus.collect.toSet ===
+      assert(pagerankFull.collect.toSet ===
         updated.result.mapVertices((vid, attr) => attr._1).vertices.collect.toSet)
     } // end of withSpark
   } // end of test pagerank
 
-  // ignore("Incremental Pregel Performance Test")
-  test("Incremental Pregel Performance Test") {
-    // TODO performacne test
-  }
+  test("ShortestPath") {
+    withSpark { sc =>
+      // Init graph
+      val edgeSeq = Seq((1, 2), (1, 5), (2, 3), (2, 5), (3, 4), (4, 5), (4, 6)).flatMap {
+        case e => Seq(e, e.swap)
+      }
+      val edges = sc.parallelize(edgeSeq).map { case (v1, v2) => (v1.toLong, v2.toLong) }
+      val graph = Graph.fromEdgeTuples(edges, 1)
+      val landmarks = Seq(1, 4).map(_.toLong)
+
+      // Init Pregel function
+      type SPMap = Map[VertexId, Int]
+      val incrementMap = (spmap: SPMap) => spmap.map { case (v, d) => v -> (d + 1) }
+      val addMaps = (spmap1: SPMap, spmap2: SPMap) =>
+        (spmap1.keySet ++ spmap2.keySet).map {
+          k => k -> math.min(spmap1.getOrElse(k, Int.MaxValue), spmap2.getOrElse(k, Int.MaxValue))
+        }.toMap
+      val vertexProgram = (id: VertexId, attr: SPMap, msg: SPMap) => {
+        addMaps(attr, msg)
+      }
+      val sendMessage = (edge: EdgeTriplet[SPMap, _]) => {
+        val newAttr = incrementMap(edge.dstAttr)
+        if (edge.srcAttr != addMaps(newAttr, edge.srcAttr)) Iterator((edge.srcId, newAttr))
+        else Iterator.empty
+      }
+
+      // Run incremental Pregel
+      val initialMsg = Map[VertexId, Int]()
+      val spGraph = graph.mapVertices { (vid, attr) =>
+        if (landmarks.contains(vid)) Map(vid -> 0) else Map[VertexId, Int]()
+      }
+      val iPregel = IncrementalPregel(spGraph, initialMsg)(vertexProgram, sendMessage, addMaps)
+      val addEdge = sc.parallelize(Array(Edge(6, 7, 1), Edge(7, 6, 1)))
+      val actual = iPregel.run(addEdge, initialMsg).cache()
+
+      // Run full
+      val graphPlus = graph.partitionBy(PartitionStrategy.EdgePartition1D)
+        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, 0)
+      val expected = ShortestPaths.run(graphPlus, landmarks).cache()
+
+      assert(actual.result.vertices.collect.toSet === expected.vertices.collect.toSet)
+    } // end of withSpark
+  } // end of test ShortestPath
 
 } // end of class IncrementalPregelSuite

@@ -27,13 +27,13 @@ import org.apache.spark.storage.StorageLevel
 private[graphx]
 class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     val _graph: Graph[Seq[(Int, VD)], ED],
-    val _partitionStrategy: PartitionStrategy,
-    val _initialMsg: A,
+    val _partStrategy: PartitionStrategy,
+    val _initMsg: A,
     val _maxIterations: Int = Int.MaxValue,
     val _activeDirection: EdgeDirection = EdgeDirection.Either) (
     val _vprog: (VertexId, VD, A) => VD,
     val _sendMsg: EdgeTriplet[VD, ED] => Iterator[(VertexId, A)],
-    val _mergeMsg: (A, A) => A)
+    val _merge: (A, A) => A)
   extends IncrementalPregel[VD, ED, A] with Serializable {
 
   /* Default constructor is provided to support serialization */
@@ -45,7 +45,10 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     }
   }
 
-  override def run(addEdges: RDD[Edge[ED]], defaultValue: VD)
+  override def run(
+      edges: RDD[Edge[ED]],
+      defaultValue: VD,
+      updateEdgeAttr: Option[Graph[_, ED] => (Graph[_, ED], VertexRDD[_])])
   : IncrementalPregel[VD, ED, A] = {
     def vProgramAndStore(iteration: Int)(
         id: VertexId, valueHistory: Seq[(Int, VD)], message: A)
@@ -90,13 +93,29 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
 
     def mergeNull(msg1: Byte, msg2: Byte): Byte = 1.toByte
 
-    // Add Edges with defaultValue
-    var graph = _graph.addEdges(addEdges, _partitionStrategy, Seq(-1 -> defaultValue)).cache()
+    var (graph, vProgMsg) = updateEdgeAttr match {
+      case Some(f) => { // Case that there are some updated edges.
+        val x = f(_graph.addEdges(edges, _partStrategy, Seq(-1 -> defaultValue)).cache())
+        val initGraph = x._1.asInstanceOf[Graph[Seq[(PartitionID, VD)], ED]].cache()
+        val initActivateMsg = x._2.cache()
+        // In this case, _initMsg have to be sent to all edges including src/dst vertices
+        val initMsg = (et: EdgeTriplet[Seq[(Int, VD)], ED]) => {
+          Iterator((et.dstId, _initMsg), (et.srcId, _initMsg))
+        }
+        (initGraph,
+          GraphXUtils.mapReduceTriplets(initGraph, initMsg, (x: A, y: A) => x,
+            Some(initActivateMsg, EdgeDirection.Either)).cache())
+      }
+      case None => { // Case that there is no updated edge.
+        val initGraph = _graph.addEdges(
+          edges, _partStrategy, Seq(-1 -> defaultValue)).cache()
+        // In this case, _initMsg is sent to only src/dst vertices
+        (initGraph,
+          initGraph.vertices.aggregateUsingIndex(edges.flatMap(
+            x => Iterator((x.srcId, _initMsg), (x.dstId, _initMsg))), _merge).cache())
+      }
+    }
 
-    // Send _initialMsg to initial vertices
-    var vProgMsg = graph.vertices.aggregateUsingIndex(
-      addEdges.map(x => ((x.srcId, _initialMsg), (x.dstId, _initialMsg)))
-        .flatMap(x => Iterator(x._1, x._2)): RDD[(VertexId, A)], _mergeMsg).cache()
     var messageCount = vProgMsg.count
 
     var i = 0
@@ -113,7 +132,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
       // Pull messages from the neighbors' origin
       val oldVProgMsg = vProgMsg
       vProgMsg = GraphXUtils.mapReduceTriplets(
-        graph, sendMessage(i), _mergeMsg, Some(activateMsg, _activeDirection.reverse)).cache()
+        graph, sendMessage(i), _merge, Some(activateMsg, _activeDirection.reverse)).cache()
 
       messageCount = vProgMsg.count()
       i += 1
@@ -125,8 +144,8 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     vProgMsg.unpersist(false)
 
     new IncrementalPregelImpl(
-      graph, _partitionStrategy, _initialMsg, _maxIterations, _activeDirection) (
-      _vprog, _sendMsg, _mergeMsg)
+      graph, _partStrategy, _initMsg, _maxIterations, _activeDirection) (
+      _vprog, _sendMsg, _merge)
   }
 
   override def persist(newLevel: StorageLevel = StorageLevel.MEMORY_ONLY)

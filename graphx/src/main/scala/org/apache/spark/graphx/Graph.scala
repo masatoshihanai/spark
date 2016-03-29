@@ -292,8 +292,8 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
   /**
    * TODO documented
    */
-  def joinTriplets(other: VertexRDD[VD], edgeDirection: EdgeDirection,
-      mapFunc: EdgeTriplet[VD, ED] => ED): Graph[VD, ED]
+  def joinTriplets[A: ClassTag](other: VertexRDD[A], edgeDirection: EdgeDirection,
+      mapFunc: EdgeTriplet[A, ED] => ED): Graph[VD, ED]
 
   /**
    * Reverses all edges in the graph.  If this graph contains an edge from a to b then the returned
