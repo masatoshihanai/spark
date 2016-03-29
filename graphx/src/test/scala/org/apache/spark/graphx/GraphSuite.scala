@@ -212,14 +212,14 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
     withSpark { sc =>
       val n = 6
       val star = starGraph(sc, n)
-      val vertices = star.vertices.filter(x => x._1 % 2 == 0)
+      val vertices: VertexRDD[String] = star.vertices.filter(x => x._1 % 2 == 0)
 
-      assert(star.joinTriplets(vertices, EdgeDirection.In,
+      assert(star.joinTriplets[String](vertices, EdgeDirection.In,
         et => et.dstId.toInt).edges.collect().toSet ===
           (1L to n).map(x => if (x % 2 == 0) Edge(0, x, x.toInt) else Edge(0, x, 1)).toSet)
 
       val vertex0 = star.vertices.filter(_._1 == 0)
-      assert(star.joinTriplets(vertex0, EdgeDirection.Out,
+      assert(star.joinTriplets[String](vertex0, EdgeDirection.Out,
         et => et.dstId.toInt).edges.collect.toSet ===
           (1L to n).map(x => Edge(0, x, x.toInt)).toSet)
     }

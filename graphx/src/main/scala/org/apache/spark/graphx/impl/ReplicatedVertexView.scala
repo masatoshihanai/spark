@@ -121,9 +121,9 @@ class ReplicatedVertexView[VD: ClassTag, ED: ClassTag](
   /**
    * TODO document
    */
-  def updateEdges(updates: VertexRDD[VD], edgeDirection: EdgeDirection,
-      mapFunc: EdgeTriplet[VD, ED] => ED): ReplicatedVertexView[VD, ED] = {
-    val shippedVerts = updates.shipVertexIds()
+  def updateEdges[A: ClassTag](updates: VertexRDD[A], edgeDirection: EdgeDirection,
+      mapFunc: EdgeTriplet[A, ED] => ED): ReplicatedVertexView[VD, ED] = {
+    val shippedVerts = updates.shipVertexAttributes(true, true)
       .partitionBy(edges.partitioner.get)
 
     val newEdges = edges.withPartitionsRDD(edges.partitionsRDD.zipPartitions(shippedVerts) {

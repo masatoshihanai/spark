@@ -18,6 +18,7 @@
 package org.apache.spark.graphx.impl
 
 import scala.reflect.ClassTag
+import scala.collection.mutable.Map
 
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.util.collection.GraphXPrimitiveKeyOpenHashMap
@@ -95,13 +96,17 @@ class EdgePartition[
       activeSet)
   }
 
-  def updateEdges (iter: Iterator[VertexId], activeness: EdgeActiveness,
-      mapFunc: EdgeTriplet[VD, ED] => ED): EdgePartition[ED, VD] = {
+  /** TODO document */
+  def updateEdges[A: ClassTag] (iter: Iterator[(VertexId, A)], activeness: EdgeActiveness,
+      mapFunc: EdgeTriplet[A, ED] => ED): EdgePartition[ED, VD] = {
     val newData = new Array[ED](data.length)
     System.arraycopy(data, 0, newData, 0, data.length)
 
-    val updates = new VertexSet
-    while(iter.hasNext) updates.add(iter.next)
+    val updates = Map[VertexId, A]()
+    while(iter.hasNext) {
+      val kv = iter.next
+      updates(kv._1) = kv._2
+    }
 
     var i = 0
     while (i < size) {
@@ -119,11 +124,11 @@ class EdgePartition[
           updates.contains(srcId) || updates.contains(dstId)
         else throw new Exception("unreachable")
       if (edgeIsActive) {
-        val edgeTriplet = new EdgeTriplet[VD, ED]
+        val edgeTriplet = new EdgeTriplet[A, ED]
         edgeTriplet.srcId = srcId
         edgeTriplet.dstId = dstId
-        edgeTriplet.srcAttr = vertexAttrs(localSrcId)
-        edgeTriplet.dstAttr = vertexAttrs(localDstId)
+        edgeTriplet.srcAttr = updates.getOrElse(srcId, null.asInstanceOf[A])
+        edgeTriplet.dstAttr = updates.getOrElse(dstId, null.asInstanceOf[A])
         newData(i) = mapFunc(edgeTriplet)
       }
       i += 1
@@ -134,13 +139,16 @@ class EdgePartition[
   }
 
   /** TODO document */
-  def updateEdgesWithIndex(iter: Iterator[VertexId], activeness: EdgeActiveness,
-      mapFunc: EdgeTriplet[VD, ED] => ED): EdgePartition[ED, VD] = {
+  def updateEdgesWithIndex[A: ClassTag](iter: Iterator[(VertexId, A)], activeness: EdgeActiveness,
+      mapFunc: EdgeTriplet[A, ED] => ED): EdgePartition[ED, VD] = {
     val newData = new Array[ED](data.length)
     System.arraycopy(data, 0, newData, 0, data.length)
 
-    val updates = new VertexSet
-    while(iter.hasNext) updates.add(iter.next)
+    val updates = Map[VertexId, A]()
+    while(iter.hasNext) {
+      val kv = iter.next
+      updates(kv._1) = kv._2
+    }
 
     index.iterator.foreach { cluster =>
       val clusterSrcId = cluster._1
@@ -157,7 +165,6 @@ class EdgePartition[
 
       if (scanCluster) {
         var pos = clusterPos
-        val srcAttr = vertexAttrs(clusterLocalSrcId)
         while (pos < size && localSrcIds(pos) == clusterLocalSrcId) {
           val localDstId = localDstIds(pos)
           val dstId = local2global(localDstId)
@@ -170,12 +177,11 @@ class EdgePartition[
               updates.contains(clusterSrcId) || updates.contains(dstId)
             else throw new Exception("unreachable")
           if (edgeIsActive) {
-            val dstAttr = vertexAttrs(localDstId)
-            val edgeTriplet = new EdgeTriplet[VD, ED]
+            val edgeTriplet = new EdgeTriplet[A, ED]
             edgeTriplet.srcId = clusterSrcId
             edgeTriplet.dstId = dstId
-            edgeTriplet.srcAttr = srcAttr
-            edgeTriplet.dstAttr = dstAttr
+            edgeTriplet.srcAttr = updates.getOrElse(clusterSrcId, null.asInstanceOf[A])
+            edgeTriplet.dstAttr = updates.getOrElse(dstId, null.asInstanceOf[A])
             newData(pos) = mapFunc(edgeTriplet)
           }
           pos += 1
@@ -332,7 +338,7 @@ class EdgePartition[
     System.arraycopy(vertexAttrs, 0, newVertexAttrs, 0, vertexAttrs.length)
     var k = vertexAttrs.length
     while (k < newVertexAttrs.length) {
-      newVertexAttrs(k) = initVertexFunc(local2global(k), defaultValue)
+      newVertexAttrs(k) = initVertexFunc(newLocal2global(k), defaultValue)
       k += 1
     }
 

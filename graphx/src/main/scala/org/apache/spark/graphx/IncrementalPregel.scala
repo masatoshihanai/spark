@@ -49,10 +49,14 @@ abstract class IncrementalPregel[VD: ClassTag, ED: ClassTag, A: ClassTag] protec
    *
    * @param addEdges RDD containing new additional edges
    * @param defaultValue Default vertices' value for additional vertices if exist.
+   * @param updateEdgeAttr update function for edge attributes before running incremental Pregel.
    *
    * @return an incremental Pregel instance including same Pregel functions and updated processing history.
    */
-  def run(addEdges: RDD[Edge[ED]], defaultValue: VD)
+  def run(
+      addEdges: RDD[Edge[ED]],
+      defaultValue: VD,
+      updateEdgeAttr: Option[Graph[_, ED] => (Graph[_, ED], VertexRDD[_])] = None)
     : IncrementalPregel[VD, ED, A]
 
   /**
