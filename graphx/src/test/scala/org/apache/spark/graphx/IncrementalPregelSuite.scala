@@ -192,7 +192,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         .map { case (id, error) => error }.sum()
     }
     withSpark { sc =>
-      val rows = 5; val cols = 5
+      val rows = 2; val cols = 2
       val resetProb = 0.15
       val tol = 0.0001; val errorTol = 1.0e-5
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
@@ -225,14 +225,16 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       // Init additional edges
       val addEdge = sc.parallelize(
-        (0 until rows).map(x => Edge(rows * cols + x, x, 1.0))
-        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
+        (0 until 1).map(x => Edge(rows * cols + x, x, 1.0))
+//        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
       ).cache()
 
       // For updating edge attribute (number of out degrees)
       val initEdgeAttr = (g: Graph[_, Double]) => {
-        val activateMsg = VertexRDD(addEdge.flatMap(x => Iterator((x.srcId, 0), (x.dstId, 0))))
-          .withPartitionsRDD(g.vertices.partitionsRDD).cache()
+        val activateMsg = g.vertices.aggregateUsingIndex(
+          addEdge.flatMap(x => Iterator((x.srcId, 0), (x.dstId, 0))),
+          (x: Int, y: Int) => x: Int
+        ).cache()
 
         val countOutDeg = (edge: EdgeTriplet[_, Double]) => Iterator((edge.srcId, 1))
         val mergeMsg = (x: Int, y: Int) => x + y
@@ -285,7 +287,6 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         else Iterator.empty
       }
 
-      // Run incremental Pregel
       val initialMsg = Map[VertexId, Int]()
       val spGraph = graph.mapVertices { (vid, attr) =>
         if (landmarks.contains(vid)) Map(vid -> 0) else Map[VertexId, Int]()
