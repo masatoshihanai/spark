@@ -314,21 +314,17 @@ class EdgePartition[
       newLocal2global, local2global.length, addLocal2global.length)
 
     // Update index
+    var i = if (firstInsertPoint >= localSrcIds.length) {
+      firstInsertPoint
+    } else {
+      index.getOrElse(newLocal2global(newLocalSrcIds(firstInsertPoint)), localSrcIds.length)
+    }
+
     var currLocalSrcId = -1
-    var i = index.getOrElse(
-      newLocal2global(newLocalSrcIds(firstInsertPoint)), localSrcIds.length)
     while (i < newLocalSrcIds.length) {
       if (currLocalSrcId != newLocalSrcIds(i)) {
         currLocalSrcId = newLocalSrcIds(i)
         index.update(newLocal2global(currLocalSrcId), i)
-        var j = 1
-        while (currLocalSrcId + j < local2global.length &&
-          index.getOrElse(local2global(currLocalSrcId + j), -1) < 0) {
-          j += 1
-        }
-        if (currLocalSrcId + j < local2global.length) {
-          i = index(newLocal2global(currLocalSrcId + j))
-        }
       }
       i += 1
     }

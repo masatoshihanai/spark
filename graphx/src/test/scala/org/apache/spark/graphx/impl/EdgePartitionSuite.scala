@@ -85,6 +85,20 @@ class EdgePartitionSuite extends SparkFunSuite {
       if (x.srcId == 3) assert(x.srcAttr == 555)
       else assert(x.srcAttr == x.srcId.toInt)
     }
+
+    // Null Iterator
+    val addEdgeNull = Set()
+    val partitionAddNull = builder.toEdgePartition
+      .withAdditionalEdges(addEdgeNull.toIterator, 888)
+
+    assert(partitionAddNull.size == builder.toEdgePartition.size)
+
+    // Null Partitioner
+    val nullBuilder = new EdgePartitionBuilder[Int, Int]
+    val partitioner = nullBuilder.toEdgePartition
+    val nullResult = partitioner.withAdditionalEdges(addEdgeNull.toIterator, 777)
+
+    assert(nullResult.size == partitioner.size)
   }
 
   test("reverse") {
