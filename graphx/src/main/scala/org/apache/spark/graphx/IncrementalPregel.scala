@@ -56,6 +56,7 @@ abstract class IncrementalPregel[VD: ClassTag, ED: ClassTag, A: ClassTag] protec
   def run(
       addEdges: RDD[Edge[ED]],
       defaultValue: VD,
+      initFunc: (VertexId, VD) => VD = (_, vdata) => vdata,
       updateEdgeAttr: Option[Graph[_, ED] => (Graph[_, ED], VertexRDD[_])] = None)
     : IncrementalPregel[VD, ED, A]
 

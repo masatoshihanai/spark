@@ -166,10 +166,11 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         ++ (0 until cols - 1).map(y => Edge(10 * 10 + y, 10 * 10 + y + 1, 1.0))
       ).cache()
 
+      val initFunc: (VertexId, Long) => Long = (vid, _) => vid
       val ccGraphPlus = gridGraph
         .partitionBy(PartitionStrategy.EdgePartition1D)
         .mapVertices {case (vid, _) => vid }
-        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, 0L)
+        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, 0L, initFunc)
         .cache()
 
       val pregelGraphPlus
@@ -179,7 +180,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val iPregelGraph
         = IncrementalPregel(ccGraph, initialMessage)(vprog, sendMessage, mergeMsg).cache()
 
-      val iPregelUptate = iPregelGraph.run(addEdge, 0L).cache()
+      val iPregelUptate = iPregelGraph.run(addEdge, 0L, initFunc).cache()
 
       assert(pregelGraphPlus.vertices.collect.toList.toSet ===
         iPregelUptate.result.vertices.collect.toList.toSet)
@@ -246,7 +247,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         (updatedGraph, updatedOutDeg)
       }
       // Run incremental Pregel
-      val updated = iPregelRank.run(addEdge, (0.0, 0.0), Some(initEdgeAttr)).cache()
+      val updated = iPregelRank.run(addEdge, (0.0, 0.0), updateEdgeAttr = Some(initEdgeAttr)).cache()
 
       // Run full version of PageRank
       val gridGraphPlus = gridGraph

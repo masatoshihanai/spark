@@ -48,6 +48,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
   override def run(
       edges: RDD[Edge[ED]],
       defaultValue: VD,
+      initFunc: (VertexId, VD) => VD,
       updateEdgeAttr: Option[Graph[_, ED] => (Graph[_, ED], VertexRDD[_])])
   : IncrementalPregel[VD, ED, A] = {
     def vProgramAndStore(iteration: Int)(
@@ -93,9 +94,13 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
 
     def mergeNull(msg1: Byte, msg2: Byte): Byte = 1.toByte
 
+    val initVertFunc: (VertexId, Seq[(Int, VD)]) => Seq[(Int, VD)] = { (vid, vdataSeq) =>
+      Seq(-1 -> initFunc(vid, vdataSeq.head._2))
+    }
+
     var (graph, vProgMsg) = updateEdgeAttr match {
       case Some(f) => { // Case that there are some updated edges.
-        val x = f(_graph.addEdges(edges, _partStrategy, Seq(-1 -> defaultValue)).cache())
+        val x = f(_graph.addEdges(edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc).cache())
         val initGraph = x._1.asInstanceOf[Graph[Seq[(PartitionID, VD)], ED]].cache()
         val initActivateMsg = x._2.cache()
         // In this case, _initMsg have to be sent to all edges including src/dst vertices
@@ -108,7 +113,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
       }
       case None => { // Case that there is no updated edge.
         val initGraph = _graph.addEdges(
-          edges, _partStrategy, Seq(-1 -> defaultValue)).cache()
+          edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc).cache()
         // In this case, _initMsg is sent to only src/dst vertices
         (initGraph,
           initGraph.vertices.aggregateUsingIndex(edges.flatMap(
