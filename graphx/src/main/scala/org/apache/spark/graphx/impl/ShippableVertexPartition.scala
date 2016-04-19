@@ -67,6 +67,26 @@ object ShippableVertexPartition {
     new ShippableVertexPartition(map.keySet, map._values, map.keySet.getBitSet, routingTable)
   }
 
+  //TODO documented
+  def apply[VD: ClassTag](
+      iter: Iterator[(VertexId, VD)],
+      routingTable: RoutingTablePartition,
+      defaultVal: VD,
+      mergeFunc: (VD, VD) => VD,
+      initFunc: (VertexId, VD) => VD): ShippableVertexPartition[VD] = {
+    val map = new GraphXPrimitiveKeyOpenHashMap[VertexId, VD]
+    // Merge the given vertices using mergeFunc
+    iter.foreach { pair =>
+      map.setMerge(pair._1, pair._2, mergeFunc)
+    }
+    // Fill in missing vertices mentioned in the routing table
+    routingTable.iterator.foreach { vid =>
+      map.changeValue(vid, initFunc(vid, defaultVal), identity)
+    }
+
+    new ShippableVertexPartition(map.keySet, map._values, map.keySet.getBitSet, routingTable)
+  }
+
   import scala.language.implicitConversions
 
   /**

@@ -402,7 +402,8 @@ object GraphImpl {
 
     val edgeRDD = EdgeRDD.fromEdgePartitions(newEdgePartitions)
       .withTargetStorageLevel(edgeStorageLevel).cache()
-    val vertexRDD = VertexRDD(origin.vertices, edgeRDD, defaultVertexValue)
+    val mergeFunc: (VD, VD) => VD = (a, b) => a
+    val vertexRDD = VertexRDD(origin.vertices, edgeRDD, defaultVertexValue, mergeFunc, initVertexFunc)
       .withTargetStorageLevel(vertexStorageLevel).cache()
     GraphImpl(vertexRDD, edgeRDD)
   }

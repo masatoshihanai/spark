@@ -328,6 +328,27 @@ object VertexRDD {
     new VertexRDDImpl(vertexPartitions)
   }
 
+  // TODO documented
+  def apply[VD: ClassTag](
+      vertices: RDD[(VertexId, VD)],
+      edges: EdgeRDD[_],
+      defaultVal: VD,
+      mergeFunc: (VD, VD) => VD,
+      initFunc: (VertexId, VD) => VD): VertexRDD[VD] = {
+    val vPartitioned: RDD[(VertexId, VD)] = vertices.partitioner match {
+      case Some(p) => vertices
+      case None => vertices.partitionBy(new HashPartitioner(vertices.partitions.length))
+    }
+    val routingTables = createRoutingTables(edges, vPartitioned.partitioner.get)
+    val vertexPartitions = vPartitioned.zipPartitions(routingTables, preservesPartitioning = true) {
+      (vertexIter, routingTableIter) =>
+        val routingTable =
+          if (routingTableIter.hasNext) routingTableIter.next() else RoutingTablePartition.empty
+        Iterator(ShippableVertexPartition(vertexIter, routingTable, defaultVal, mergeFunc, initFunc))
+    }
+    new VertexRDDImpl(vertexPartitions)
+  }
+
   /**
    * Constructs a `VertexRDD` containing all vertices referred to in `edges`. The vertices will be
    * created with the attribute `defaultVal`. The resulting `VertexRDD` will be joinable with

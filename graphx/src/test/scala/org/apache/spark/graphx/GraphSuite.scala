@@ -279,6 +279,29 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
       assert(newGraph.vertices.collect().toSet === Set((1, 1), (2, 2), (3, 3)))
       assert(newGraph.edges.collect().toSet === Set(Edge(1, 2, 0), Edge(2, 3, 0), Edge(1, 3, 0)))
     }
+
+    // Add using initiating vertex function
+    withSpark {sc =>
+      val vertices: RDD[(VertexId, Int)] = sc.parallelize(Array(
+        (1L, 1),
+        (2L, 2),
+        (3L, 3)
+      ))
+      val edges: RDD[Edge[Int]] = sc.parallelize(Array(
+        Edge(1L, 2L, 0),
+        Edge(2L, 3L, 0)
+      ))
+      val partitionStrategy = PartitionStrategy.EdgePartition1D
+      val graph = Graph(vertices, edges, 0).partitionBy(partitionStrategy).cache()
+      val addEdge: RDD[Edge[Int]] = sc.parallelize(Array(Edge(1L, 4L, 0)))
+
+      val initVertFunc: (VertexId, Int) => Int = { (id, _) => id.toInt}
+      val newGraph = graph.addEdges(addEdge, partitionStrategy, 0, initVertFunc).cache()
+
+      assert(newGraph.vertices.count == 4)
+      assert(newGraph.vertices.collect().toSet === Set((1, 1), (2, 2), (3, 3), (4, 4)))
+      assert(newGraph.edges.collect().toSet === Set(Edge(1, 2, 0), Edge(2, 3, 0), Edge(1, 4, 0)))
+    }
   }
 
   test("subgraph") {
