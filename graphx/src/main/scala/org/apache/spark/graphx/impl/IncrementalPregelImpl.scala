@@ -186,7 +186,7 @@ object IncrementalPregelImpl extends Logging {
       initialMsg: A,
       maxIterations: Int = Int.MaxValue,
       activeDirection: EdgeDirection = EdgeDirection.Either,
-      partitionStorategy: PartitionStrategy = PartitionStrategy.RandomVertexCut)
+      partitionStorategy: PartitionStrategy = PartitionStrategy.EdgePartition1D)
      (vprog: (VertexId, VD, A) => VD,
       sendMsg: EdgeTriplet[VD, ED] => Iterator[(VertexId, A)],
       mergeMsg: (A, A) => A)

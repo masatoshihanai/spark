@@ -249,10 +249,10 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
     withSpark {sc =>
       val vertices: RDD[(VertexId, Int)] = sc.parallelize(Array((1L, 1), (2L, 2)))
       val edges: RDD[Edge[Int]] = sc.parallelize(Array(Edge(1L, 2L, 0)))
-      val graph = Graph(vertices, edges, 0).partitionBy(PartitionStrategy.RandomVertexCut).cache()
+      val graph = Graph(vertices, edges, 0).partitionBy(PartitionStrategy.EdgePartition1D).cache()
       val addEdge: RDD[Edge[Int]] = sc.parallelize(Array(Edge(2L, 3L, 0)))
 
-      val newGraph = graph.addEdges(addEdge, PartitionStrategy.RandomVertexCut, 99).cache()
+      val newGraph = graph.addEdges(addEdge, PartitionStrategy.EdgePartition1D, 99).cache()
       assert(newGraph.vertices.count == 3)
       assert(newGraph.vertices.collect().toSet === Set((1, 1), (2, 2), (3, 99)))
       assert(newGraph.edges.collect().toSet === Set(Edge(1, 2, 0), Edge(2, 3, 0)))
@@ -269,7 +269,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
         Edge(1L, 2L, 0),
         Edge(2L, 3L, 0)
       ))
-      val partitionStrategy = PartitionStrategy.RandomVertexCut
+      val partitionStrategy = PartitionStrategy.EdgePartition1D
       val graph = Graph(vertices, edges, 0).partitionBy(partitionStrategy).cache()
       val addEdge: RDD[Edge[Int]] = sc.parallelize(Array(Edge(1L, 3L, 0)))
 
@@ -486,7 +486,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
         }
 
         val timeInc = withSpark[Long] { sc =>
-          val partitionStrategy = PartitionStrategy.RandomVertexCut
+          val partitionStrategy = PartitionStrategy.EdgePartition1D
           val line = lineGraph(sc, numVertex).partitionBy(partitionStrategy).cache()
           line.edges.partitionsRDD.count()
           val addEdge = sc.parallelize((1L to numAddVertex).map(x => Edge(x + numVertex, x + numVertex + 1, 1)))
@@ -522,7 +522,7 @@ class GraphSuite extends SparkFunSuite with LocalSparkContext {
         }
 
         val timeInc = withSpark[Long] { sc =>
-          val partitionStrategy = PartitionStrategy.RandomVertexCut
+          val partitionStrategy = PartitionStrategy.EdgePartition1D
           val star = starGraph(sc, numVertex).partitionBy(partitionStrategy).cache()
           star.edges.partitionsRDD.count()
           val addEdge = sc.parallelize((1L to numAddVertex).map(x => Edge(0, x + numVertex, 1)))

@@ -22,7 +22,6 @@ import org.apache.spark.graphx.impl.IncrementalPregelImpl
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.graphx.lib.ShortestPaths
 import org.apache.spark.graphx.util.GraphGenerators
-import org.apache.spark.rdd.RDD
 
 class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
@@ -32,7 +31,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val chain = Graph.fromEdgeTuples(
         sc.parallelize((1 until numVertices)
           .map(x => (x: VertexId, x + 1: VertexId))), 0)
-        .partitionBy(PartitionStrategy.RandomVertexCut)
+        .partitionBy(PartitionStrategy.EdgePartition1D)
         .cache()
       assert(chain.vertices.collect.toSet ===
         (1 to numVertices).map(x => (x: VertexId, 0)).toSet)
@@ -78,7 +77,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val chain = Graph.fromEdgeTuples(
         sc.parallelize((1 until numVertices)
           .map(x => (x: VertexId, x + 1: VertexId))), 0)
-        .partitionBy(PartitionStrategy.RandomVertexCut)
+        .partitionBy(PartitionStrategy.EdgePartition1D)
         .mapVertices((id, _) => id)
         .cache()
       assert(chain.vertices.collect.toSet ===
@@ -125,8 +124,8 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         Set((1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (0, 0)))
 
       // Check with original pregel
-      val fullResult = chain.partitionBy(PartitionStrategy.RandomVertexCut)
-        .addEdges(addEdges, PartitionStrategy.RandomVertexCut, 0)
+      val fullResult = chain.partitionBy(PartitionStrategy.EdgePartition1D)
+        .addEdges(addEdges, PartitionStrategy.EdgePartition1D, 0)
         .pregel(Long.MaxValue)(vprog, sendMsg, mergeMsg).cache()
       assert(updated.result.vertices.collect.toSet ===
         fullResult.vertices.collect.toSet)
@@ -168,9 +167,10 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       ).cache()
 
       val ccGraphPlus = gridGraph
-        .partitionBy(PartitionStrategy.RandomVertexCut)
+        .partitionBy(PartitionStrategy.EdgePartition1D)
         .mapVertices {case (vid, _) => vid }
-        .addEdges(addEdge, PartitionStrategy.RandomVertexCut, 0L).cache()
+        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, 0L)
+        .cache()
 
       val pregelGraphPlus
         = Pregel(ccGraphPlus, initialMessage)(vprog, sendMessage, mergeMsg).cache()
@@ -192,7 +192,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         .map { case (id, error) => error }.sum()
     }
     withSpark { sc =>
-      val rows = 2; val cols = 2
+      val rows = 10; val cols = 10
       val resetProb = 0.15
       val tol = 0.0001; val errorTol = 1.0e-5
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
@@ -225,8 +225,8 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       // Init additional edges
       val addEdge = sc.parallelize(
-        (0 until 1).map(x => Edge(rows * cols + x, x, 1.0))
-//        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
+        (0 until rows).map(x => Edge(rows * cols + x, x, 1.0))
+        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
       ).cache()
 
       // For updating edge attribute (number of out degrees)

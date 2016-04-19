@@ -165,6 +165,11 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
       partitionStrategy: PartitionStrategy,
       defaultVertexValue: VD,
       initVertexFunc: (VertexId, VD) => VD): Graph[VD, ED] = {
+    require(partitionStrategy != PartitionStrategy.RandomVertexCut,
+      "PartitionStrategy.RandomVertexCut is not supported")
+    require(partitionStrategy != PartitionStrategy.CanonicalRandomVertexCut,
+      "PartitionStrategy.CanonicalRandomVertexCut is not supported")
+
     val numPartition = edges.getNumPartitions
     val edgesIterator = addEdges.map { addEdge =>
       val partitionID: PartitionID = partitionStrategy.getPartition(
@@ -366,25 +371,38 @@ object GraphImpl {
 
   /** Create a graph from a new edges and a existing graph to which the new edges are added. */
   def fromEdgesWithExistingGraph[VD: ClassTag, ED: ClassTag](
-      existingGraph: Graph[VD, ED],
+      origin: Graph[VD, ED],
       additionalEdges: RDD[(PartitionID, Iterator[Edge[ED]])],
       defaultVertexValue: VD,
       initVertexFunc: (VertexId, VD) => VD): GraphImpl[VD, ED] = {
     // Storage levels of the existing graph are used for a new graph.
-    val edgeStorageLevel = existingGraph.edges.getStorageLevel
-    val vertexStorageLevel = existingGraph.vertices.getStorageLevel
+    val edgeStorageLevel
+      = if (origin.edges.getStorageLevel == StorageLevel.NONE) {
+        StorageLevel.MEMORY_ONLY
+      } else {
+        origin.edges.getStorageLevel
+      }
+    val vertexStorageLevel
+      = if (origin.vertices.getStorageLevel == StorageLevel.NONE) {
+        StorageLevel.MEMORY_ONLY
+      } else {
+        origin.vertices.getStorageLevel
+      }
 
     // Construct a new edge partitions
-    val newEdgePartitions: RDD[(PartitionID, EdgePartition[ED, VD])] = existingGraph.edges.partitionsRDD
-      .zip(additionalEdges)
-      .map { case (existingItr: (PartitionID, EdgePartition[ED, VD]), additionalItr) =>
-        (existingItr._1,
-          existingItr._2.withAdditionalEdges(additionalItr._2, defaultVertexValue, initVertexFunc))
-    }
+    val newEdgePartitions: RDD[(PartitionID, EdgePartition[ED, VD])]
+      = origin.edges.partitionsRDD
+        .zip(additionalEdges)
+        .map { case (existingItr: (PartitionID, EdgePartition[ED, VD]), additionalItr) =>
+          (existingItr._1,
+            existingItr._2.withAdditionalEdges(additionalItr._2, defaultVertexValue, initVertexFunc))
+        }
+        .cache()
+        .asInstanceOf[RDD[(PartitionID, EdgePartition[ED, VD])]]
 
     val edgeRDD = EdgeRDD.fromEdgePartitions(newEdgePartitions)
       .withTargetStorageLevel(edgeStorageLevel).cache()
-    val vertexRDD = VertexRDD(existingGraph.vertices, edgeRDD, defaultVertexValue)
+    val vertexRDD = VertexRDD(origin.vertices, edgeRDD, defaultVertexValue)
       .withTargetStorageLevel(vertexStorageLevel).cache()
     GraphImpl(vertexRDD, edgeRDD)
   }
