@@ -304,6 +304,8 @@ class EdgePartition[
         newLocalSrcIds, insertPoint + currAddEdge, localSrcIds.length - insertPoint)
       System.arraycopy(localDstIds, insertPoint,
         newLocalDstIds, insertPoint + currAddEdge, localDstIds.length - insertPoint)
+      System.arraycopy(data, insertPoint,
+        newData, insertPoint + currAddEdge, data.length - insertPoint)
     }
 
     // Add new vertices to local2global
