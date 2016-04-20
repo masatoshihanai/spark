@@ -100,24 +100,24 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
 
     var (graph, vProgMsg) = updateEdgeAttr match {
       case Some(f) => { // Case that there are some updated edges.
-        val x = f(_graph.addEdges(edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc).cache())
+        val x = f(_graph.addEdges(edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc))
         val initGraph = x._1.asInstanceOf[Graph[Seq[(PartitionID, VD)], ED]].cache()
-        val initActivateMsg = x._2.cache()
+        val initActivateMsg = x._2
         // In this case, _initMsg have to be sent to all edges including src/dst vertices
         val initMsg = (et: EdgeTriplet[Seq[(Int, VD)], ED]) => {
           Iterator((et.dstId, _initMsg), (et.srcId, _initMsg))
         }
         (initGraph,
           GraphXUtils.mapReduceTriplets(initGraph, initMsg, (x: A, y: A) => x,
-            Some(initActivateMsg, EdgeDirection.Either)).cache())
+            Some(initActivateMsg, EdgeDirection.Either)))
       }
       case None => { // Case that there is no updated edge.
         val initGraph = _graph.addEdges(
-          edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc).cache()
+          edges, _partStrategy, Seq(-1 -> defaultValue), initVertFunc)
         // In this case, _initMsg is sent to only src/dst vertices
         (initGraph,
           initGraph.vertices.aggregateUsingIndex(edges.flatMap(
-            x => Iterator((x.srcId, _initMsg), (x.dstId, _initMsg))), _merge).cache())
+            x => Iterator((x.srcId, _initMsg), (x.dstId, _initMsg))), _merge))
       }
     }
 
