@@ -127,7 +127,7 @@ object IncrementalPregel extends Logging {
    * @param activeDirection (Same as [[Pregel]]) the direction of edges incident to a vertex that
    * received a message in the previous round on which to run `sendMsg`.
    *
-   * @param partitionStorategy [[PartitionStrategy]] for input graph and later additional edges.
+   * @param partitionStrategy [[PartitionStrategy]] for input graph and later additional edges.
    *
    * @param vprog (Same as [[Pregel]]) the user-defined vertex program which runs on each vertex
    * and receives the inbound message and computes a new vertex value.
@@ -149,14 +149,14 @@ object IncrementalPregel extends Logging {
       initialMsg: A,
       maxIterations: Int = Int.MaxValue,
       activeDirection: EdgeDirection = EdgeDirection.Either,
-      partitionStorategy: PartitionStrategy = PartitionStrategy.EdgePartition1D)
+      partitionStrategy: PartitionStrategy = PartitionStrategy.EdgePartition1D)
      (vprog: (VertexId, VD, A) => VD,
       sendMsg: EdgeTriplet[VD, ED] => Iterator[(VertexId, A)],
       mergeMsg: (A, A) => A)
     : IncrementalPregel[VD, ED, A] =
   {
     IncrementalPregel.initRun[VD, ED, A] (
-      graph, initialMsg, maxIterations, activeDirection, partitionStorategy)(
+      graph, initialMsg, maxIterations, activeDirection, partitionStrategy)(
       vprog, sendMsg, mergeMsg)
   }
 
