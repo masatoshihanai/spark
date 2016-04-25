@@ -84,15 +84,15 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     }
 
     def sendNull(edgeTriplet: EdgeTriplet[Seq[(Int, VD)], ED])
-    : Iterator[(VertexId, Byte)] = {
+    : Iterator[(VertexId, Int)] = {
       if (_activeDirection == EdgeDirection.Out) {
-        Iterator((edgeTriplet.dstId, 1.toByte))
+        Iterator((edgeTriplet.dstId, 1))
       } else { // _activeDirection == EdgeDirection.Either
-        Iterator((edgeTriplet.srcId, 1.toByte), (edgeTriplet.dstId, 1.toByte))
+        Iterator((edgeTriplet.srcId, 1), (edgeTriplet.dstId, 1))
       }
     }
 
-    def mergeNull(msg1: Byte, msg2: Byte): Byte = 1.toByte
+    def mergeNull(msg1: Int, msg2: Int): Int = 1
 
     val initVertFunc: (VertexId, Seq[(Int, VD)]) => Seq[(Int, VD)] = { (vid, vdataSeq) =>
       Seq(-1 -> initFunc(vid, vdataSeq.head._2))
