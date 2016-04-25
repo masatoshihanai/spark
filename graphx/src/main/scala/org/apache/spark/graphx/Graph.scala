@@ -105,6 +105,25 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
   def checkpoint(): Unit
 
   /**
+   * Mark this Graph for local checkpointing using Spark's existing caching layer.
+   *
+   * This method is for users who wish to truncate RDD lineages while skipping the expensive
+   * step of replicating the materialized data in a reliable distributed file system.
+   *
+   * Local checkpointing sacrifices fault-tolerance for performance. In particular, checkpointed
+   * data is written to ephemeral local storage in the executors instead of to a reliable,
+   * fault-tolerant storage. The effect is that if an executor fails during the computation,
+   * the checkpointed data may no longer be accessible, causing an irrecoverable job failure.
+   *
+   * This is NOT safe to use with dynamic allocation, which removes executors along
+   * with their cached blocks. If you must use both features, you are advised to set
+   * `spark.dynamicAllocation.cachedExecutorIdleTimeout` to a high value.
+   *
+   * The checkpoint directory set through `SparkContext#setCheckpointDir` is not used.
+   */
+  def localCheckpoint(): Graph[VD, ED]
+
+  /**
    * Return whether this Graph has been checkpointed or not.
    * This returns true iff both the vertices RDD and edges RDD have been checkpointed.
    */
