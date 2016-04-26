@@ -159,7 +159,7 @@ object Pregel extends Logging {
 
     // FIXME it is temporary solution for the bug of Graph.checkpoint() API,
     // where "java.lang.ClassCastException" is thrown
-    // when do Graph.checkpoint() before Graph.edge.collect().
+    // when calling Graph.checkpoint() before Graph.edge.collect().
     g.mapVertices((_, vdata) => vdata)
   } // end of apply
 
