@@ -120,7 +120,10 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
             x => Iterator((x.srcId, _initMsg), (x.dstId, _initMsg))), _merge))
       }
     }
+    graph.localCheckpoint()
+    graph.vertices.count(); graph.edges.count()
 
+    vProgMsg.localCheckpoint()
     var messageCount = vProgMsg.count
 
     var i = 0
@@ -128,16 +131,17 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
     while (messageCount > 0 && i < _maxIterations) {
       oldGraph = graph
       // Compute vertex program with vProgMsg
-      graph = graph.joinVertices(vProgMsg)(vProgramAndStore(i)).cache()
+      graph = graph.joinVertices(vProgMsg)(vProgramAndStore(i)).localCheckpoint()
+      graph.vertices.count(); graph.edges.count()
 
       // Send activate messages to destination neighbors
       val activateMsg = GraphXUtils.mapReduceTriplets(
-        graph, sendNull, mergeNull, Some(vProgMsg, _activeDirection)).cache()
+        graph, sendNull, mergeNull, Some(vProgMsg, _activeDirection))
 
       // Pull messages from the neighbors' origin
       val oldVProgMsg = vProgMsg
       vProgMsg = GraphXUtils.mapReduceTriplets(
-        graph, sendMessage(i), _merge, Some(activateMsg, _activeDirection.reverse)).cache()
+        graph, sendMessage(i), _merge, Some(activateMsg, _activeDirection.reverse)).localCheckpoint()
 
       messageCount = vProgMsg.count()
       i += 1
@@ -223,11 +227,13 @@ object IncrementalPregelImpl extends Logging {
     var i = 1
     while (messageCount > 0 && i < maxIterations) {
       prevG = graphWithHistory
-      graphWithHistory = graphWithHistory.joinVertices(messages)(vProgramAndStore(i)).cache()
+      graphWithHistory = graphWithHistory.joinVertices(messages)(vProgramAndStore(i)).localCheckpoint()
+      graphWithHistory.vertices.count()
+      graphWithHistory.edges.count()
 
       val oldMessages = messages
       messages = GraphXUtils.mapReduceTriplets(
-        graphWithHistory, sendMessage, mergeMsg, Some((oldMessages, activeDirection))).cache()
+        graphWithHistory, sendMessage, mergeMsg, Some((oldMessages, activeDirection))).localCheckpoint()
 
       messageCount = messages.count
 
