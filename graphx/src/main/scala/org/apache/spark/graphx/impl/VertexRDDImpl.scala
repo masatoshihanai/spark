@@ -221,6 +221,15 @@ class VertexRDDImpl[VD] private[graphx] (
     this.withPartitionsRDD[VD2](parts)
   }
 
+  override def unionVertex(other: VertexRDD[VD]): VertexRDD[VD] = {
+    val parts = partitionsRDD.zipPartitions(other.partitionsRDD, true) { (thisItr, otherItr) =>
+      thisItr.map { x =>
+        x.withMask(x.mask | otherItr.next().mask)
+      }
+    }
+    this.withPartitionsRDD(parts)
+  }
+
   override def reverseRoutingTables(): VertexRDD[VD] =
     this.mapVertexPartitions(vPart => vPart.withRoutingTable(vPart.routingTable.reverse))
 

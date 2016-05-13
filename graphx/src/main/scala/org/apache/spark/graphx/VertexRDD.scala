@@ -227,6 +227,12 @@ abstract class VertexRDD[VD](
       messages: RDD[(VertexId, VD2)], reduceFunc: (VD2, VD2) => VD2): VertexRDD[VD2]
 
   /**
+   * TODO documented
+   * Union vertices with same properties
+   */
+  def unionVertex(other: VertexRDD[VD]): VertexRDD[VD]
+
+  /**
    * Returns a new `VertexRDD` reflecting a reversal of all edge directions in the corresponding
    * [[EdgeRDD]].
    */

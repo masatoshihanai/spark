@@ -50,6 +50,7 @@ abstract class IncrementalPregel[VD: ClassTag, ED: ClassTag, A: ClassTag] protec
    * @param addEdges RDD containing new additional edges
    * @param defaultValue Default vertices' value for additional vertices if exist.
    * @param updateEdgeAttr update function for edge attributes before running incremental Pregel.
+   * @param pruningFunc function of comparing vertex values for ignoring vertex computation
    *
    * @return an incremental Pregel instance including same Pregel functions and updated processing history.
    */
@@ -57,7 +58,8 @@ abstract class IncrementalPregel[VD: ClassTag, ED: ClassTag, A: ClassTag] protec
       addEdges: RDD[Edge[ED]],
       defaultValue: VD,
       initFunc: (VertexId, VD) => VD = (_, vdata) => vdata,
-      updateEdgeAttr: Option[Graph[_, ED] => (Graph[_, ED], VertexRDD[_])] = None)
+      updateEdgeAttr: Option[Graph[_, ED] => Graph[_, ED]] = None,
+      pruningFunc: (VD, VD) => Boolean = (x, y) => x == y)
     : IncrementalPregel[VD, ED, A]
 
   /**
@@ -97,6 +99,11 @@ abstract class IncrementalPregel[VD: ClassTag, ED: ClassTag, A: ClassTag] protec
    * Uncache teh graph and historical processing data.
    */
   def unpersist(blocking: Boolean = true): IncrementalPregel[VD, ED, A]
+
+  /**
+   * Count # of vertices
+   */
+  def countVertices(): Long
 }
 
 /**

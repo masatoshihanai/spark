@@ -60,12 +60,13 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
 
       val iPregel = IncrementalPregel.initRun(chain, Int.MaxValue)(vprog, sendMsg, mergeMsg).cache()
 
-      assert(iPregel.asInstanceOf[IncrementalPregelImpl[Int, Int, Int]]._graph.vertices.collect.toSet ===
-        Set((1, Seq(0 -> 1, -1 -> 0)),
-            (2, Seq(1 -> 1,  0 -> 2, -1 -> 0)),
-            (3, Seq(2 -> 1,  1 -> 2,  0 -> 3, -1 -> 0)),
-            (4, Seq(3 -> 1,  2 -> 2,  1 -> 3,  0 -> 4, -1 -> 0)),
-            (5, Seq(4 -> 1,  3 -> 2,  2 -> 3,  1 -> 4,  0 -> 5, -1 -> 0)))
+      assert(iPregel.asInstanceOf[IncrementalPregelImpl[Int, Int, Int]]
+        ._graph.vertices.map(x => (x._1, x._2.toMap())).collect.toSet ===
+        Set((1, Map(                                    0 -> 1, -1 -> 0)),
+            (2, Map(                           1 -> 1,  0 -> 2, -1 -> 0)),
+            (3, Map(                  2 -> 1,  1 -> 2,  0 -> 3, -1 -> 0)),
+            (4, Map(         3 -> 1,  2 -> 2,  1 -> 3,  0 -> 4, -1 -> 0)),
+            (5, Map(4 -> 1,  3 -> 2,  2 -> 3,  1 -> 4,  0 -> 5, -1 -> 0)))
       )
       assert(iPregel.result.vertices.collect.toSet ===
         Set((1, 1), (2, 1), (3, 1), (4, 1), (5, 1))
@@ -120,7 +121,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       //     0 - 0 - 0 - 0 - 0  (iteration 3)
       //     0 - 0 - 0 - 0 - 0  (iteration 4)
       val addEdges = sc.parallelize(Array(Edge(0, 3, 0)))
-      val updated = iPregel.run(addEdges, 0).cache()
+      val updated = iPregel.run(addEdges, Long.MaxValue, initFunc = (id, _) => id).cache()
 
       // Check result
       assert(updated.result.vertices.collect.toSet ===
@@ -136,13 +137,13 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       // Check history
       val initValue = -1
       assert(updated.asInstanceOf[IncrementalPregelImpl[Int, Int, Int]]
-        ._graph.vertices.collect.toSet ===
-          Set((1, List(3 -> 0, 0 -> 1, initValue -> 1)),
-              (2, List(2 -> 0, 1 -> 1, 0 -> 2, initValue -> 2)),
-              (3, List(1 -> 0, 0 -> 3, initValue -> 3)),
-              (4, List(2 -> 0, 1 -> 3, 0 -> 4, initValue -> 4)),
-              (5, List(3 -> 0, 2 -> 3, 1 -> 4, 0 -> 5, initValue -> 5)),
-              (0, List(0 -> 0, initValue -> 0)))
+        ._graph.vertices.map(x => (x._1, x._2.toMap())).collect.toSet ===
+          Set((1, Map(3 -> 0, 0 -> 1, initValue -> 1)),
+              (2, Map(2 -> 0, 1 -> 1, 0 -> 2, initValue -> 2)),
+              (3, Map(1 -> 0, 0 -> 3, initValue -> 3)),
+              (4, Map(2 -> 0, 1 -> 3, 0 -> 4, initValue -> 4)),
+              (5, Map(3 -> 0, 2 -> 3, 1 -> 4, 0 -> 5, initValue -> 5)),
+              (0, Map(0 -> 0, initValue -> 0)))
       )
     } // end of withSpark
   } // end of test run
@@ -165,8 +166,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
       val initialMessage = Long.MaxValue
       val addEdge = sc.parallelize(
-        (0 until rows).map(x => Edge(10 * 10 + x, x, 1.0))
-        ++ (0 until cols - 1).map(y => Edge(10 * 10 + y, 10 * 10 + y + 1, 1.0))
+        (0 until 1).map(x => Edge(rows * cols, rows * cols - 1, 1.0))
       ).cache()
 
       val initFunc: (VertexId, Long) => Long = (vid, _) => vid
@@ -197,7 +197,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
     }
 
     // Three functions for Pagerank with Pregel
-    val resetProb = 0.15; val tol = 0.0001; val errorTol = 1.0e-5
+    val resetProb = 0.15; val tol = 0.001; val errorTol = 1.0e-3
     val vertexProgram = (id: VertexId, attr: (Double, Double), msgSum: Double) => {
       val (oldPR, lastDelta) = attr
       val newPR = oldPR + (1.0 - resetProb) * msgSum
@@ -213,101 +213,69 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
     val messageCombiner = (a: Double, b: Double) => a + b
 
     def updateEdgeAttrFunc[ED: ClassTag](addEdge: RDD[Edge[ED]])(g: Graph[_, Double])
-        : (Graph[_, Double], VertexRDD[Int]) = {
+        : Graph[_, Double] = {
       val activateMsg = g.vertices.aggregateUsingIndex(
-        addEdge.flatMap(x => Iterator((x.srcId, 0), (x.dstId, 0))),
-        (x: Int, y: Int) => x: Int
-      ).cache()
-
+        addEdge.flatMap(x => Iterator((x.srcId, 0))), (x: Int, y: Int) => x: Int)
       val countOutDeg = (edge: EdgeTriplet[_, Double]) => Iterator((edge.srcId, 1))
       val mergeMsg = (x: Int, y: Int) => x + y
       val updatedOutDeg = GraphXUtils.mapReduceTriplets(
-        g, countOutDeg, mergeMsg, Some(activateMsg, EdgeDirection.Either)).cache()
+        g, countOutDeg, mergeMsg, Some(activateMsg, EdgeDirection.Out)).cache()
 
-      val updatedGraph = g.joinTriplets[Int](
-        updatedOutDeg, EdgeDirection.Out, et => 1.0 / et.srcAttr).cache()
-      (updatedGraph, activateMsg)
+      g.joinTriplets[Int](updatedOutDeg,
+        EdgeDirection.Out, et => 1.0 / et.srcAttr).cache()
     }
 
-    // PageRank on Grid
-    withSpark { sc =>
-      val rows = 30; val cols = 30
-      val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
-
-      // Init graph for pagerank
-      val pagerankGraph = gridGraph
-        .outerJoinVertices(gridGraph.outDegrees) {(_, _, deg) => deg.getOrElse(0)}
-        .mapTriplets( e => 1.0 / e.srcAttr )
-        .mapVertices {(id, attr) => (0.0, 0.0)}
-        .cache()
-
-      // Initial Run
-      val iPregelRank = IncrementalPregel(pagerankGraph, resetProb / (1.0 - resetProb),
-        activeDirection = EdgeDirection.Out)(vertexProgram, sendMessage, messageCombiner).cache()
-
-      // Init additional edges
-      val addEdge: RDD[Edge[Double]] = sc.parallelize(
-        (0 until rows).map(x => Edge(rows * cols + x, x, 1.0))
-        ++ (0 until cols - 1).map(x => Edge(rows * cols + x, rows * cols + x + 1, 1.0))
-      ).cache()
-
-      // For updating edge attribute (number of out degrees)
-      val updateEdgeAttr = updateEdgeAttrFunc(addEdge)(_)
-
-      // Run incremental Pregel
-      val updated = iPregelRank.run(addEdge, (0.0, 0.0), updateEdgeAttr = Some(updateEdgeAttr)).cache()
-
-      // Run full version of PageRank
-      val gridGraphPlus = gridGraph
-        .partitionBy(PartitionStrategy.EdgePartition1D)
-        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, (0, 0)).cache()
-      val pagerankFull = gridGraphPlus.pageRank(tol, resetProb).vertices.cache()
-
-      assert(compareRanks(pagerankFull,
-        updated.result.mapVertices((vid, attr) => attr._1).vertices) < errorTol)
-      assert(pagerankFull.collect.toSet ===
-        updated.result.mapVertices((vid, attr) => attr._1).vertices.collect.toSet)
-    } // end of withSpark
+    val pruning: ((Double, Double), (Double, Double)) => Boolean = { (x, y) =>
+      math.abs(x._1 - y._1) < 0.001
+    }
 
     // PageRank on LogNormal
     withSpark { sc =>
-      val size = 10
+      val size = 1000
       val logNormal = GraphGenerators.logNormalGraph(sc, size, seed = 1)
         .partitionBy(PartitionStrategy.EdgePartition1D)
         .removeSelfEdges()
         .groupEdges((x,y) => x)
         .cache()
 
-      val initGraph = logNormal
-        .outerJoinVertices(logNormal.outDegrees) { (_, _, deg) => deg.getOrElse(0) }
+      val degGraph = logNormal
+        .outerJoinVertices(logNormal.outDegrees) { (_, _, deg) => deg.getOrElse(0) }.cache()
+      val initGraph = degGraph
         .mapTriplets(e => 1.0 / e.srcAttr)
         .mapVertices { (id, attr) => (0.0, 0.0) }
+        .partitionBy(PartitionStrategy.EdgePartition1D)
         .cache()
+      initGraph.edges.count()
 
       val iPregelRank = IncrementalPregel(initGraph, resetProb / (1.0 - resetProb),
         activeDirection = EdgeDirection.Out, partitionStrategy = PartitionStrategy.EdgePartition1D)(
         vertexProgram, sendMessage, messageCombiner).cache()
+      iPregelRank.result.edges.count()
 
       val addEdge: RDD[Edge[Double]]
-        = sc.parallelize(Array(Edge(size, size - 1, 1.0))).cache()
+        = sc.parallelize(Array(Edge(size, 728, 1.0)))
+          .cache()
+      addEdge.count()
 
-      val updateEdgeAttr = updateEdgeAttrFunc(addEdge)(_)
-      val updated = iPregelRank.run(addEdge, (0.0, 0.0), updateEdgeAttr = Some(updateEdgeAttr)).cache()
-      updated.result.vertices.count()
+       val updateEdgeAttr = updateEdgeAttrFunc(addEdge)(_)
+      val updated = iPregelRank.run(addEdge, (0.0, 0.0),
+        updateEdgeAttr = Some(updateEdgeAttr)
+        , pruningFunc = pruning
+      ).cache()
+      updated.countVertices()
 
-//      val add: RDD[Edge[Int]]
-//        = sc.parallelize(Array(Edge(size, size - 1, 0))).cache()
-//      val logNormalPlus = logNormal
-//        .partitionBy(PartitionStrategy.EdgePartition1D)
-//        .addEdges(add, PartitionStrategy.EdgePartition1D, 0).cache()
-//      println(logNormalPlus.edges.collect().toList.toString)
-//      val pagerankFull = logNormalPlus.pageRank(tol, resetProb).vertices.c
-      //pagerankFull.count()ount()
+      val add: RDD[Edge[Int]]
+        = sc.parallelize(Array(Edge(size, 728, 1))).cache()
+      val logNormalPlus = logNormal
+        .partitionBy(PartitionStrategy.EdgePartition1D)
+        .addEdges(add, PartitionStrategy.EdgePartition1D, 0).cache()
+      logNormalPlus.edges.count()
+      val pagerankFullGraph = logNormalPlus.pageRank(tol, resetProb).cache()
+      val pagerankFull = pagerankFullGraph.vertices.cache()
+      pagerankFull.count()
 
-//      assert(compareRanks(pagerankFull,
-//        updated.result.mapVertices((vid, attr) => attr._1).vertices) < errorTol)
-//      assert(pagerankFull.collect.toSet ===
-//        updated.result.mapVertices((vid, attr) => attr._1).vertices.collect.toSet)
+      assert(compareRanks(pagerankFull,
+        updated.result.mapVertices((vid, attr) => attr._1).vertices) < errorTol)
     }
   } // end of test pagerank
 

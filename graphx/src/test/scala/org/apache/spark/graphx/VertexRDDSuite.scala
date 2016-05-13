@@ -174,6 +174,17 @@ class VertexRDDSuite extends SparkFunSuite with LocalSparkContext {
     }
   }
 
+  test("unionVertex") {
+    withSpark {sc =>
+      val n = 10
+      val verts = vertices(sc, n).cache()
+      val evenEvents = verts.filter(x => (x._1 % 2 == 1)).cache()
+      val oddEvents = verts.filter(x => (x._1 % 2 == 0)).cache()
+
+      assert(verts.collect.toSet === evenEvents.unionVertex(oddEvents).collect.toSet)
+    }
+  }
+
   test("mergeFunc") {
     // test to see if the mergeFunc is working correctly
     withSpark { sc =>
