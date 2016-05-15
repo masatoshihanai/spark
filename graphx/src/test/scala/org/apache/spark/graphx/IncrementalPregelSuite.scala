@@ -211,7 +211,6 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         .removeSelfEdges()
         .groupEdges((x,y) => x)
         .cache()
-      println(graph.vertices.collect().toList.toString)
 
       val initialMessage = Long.MaxValue
       val addEdge = sc.parallelize(
