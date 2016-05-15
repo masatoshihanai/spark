@@ -148,7 +148,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
     } // end of withSpark
   } // end of test run
 
-  test("Connected component") {
+  test("Connected component on Grid") {
     withSpark { sc =>
       val vprog = (id: VertexId, attr: Long, msg: Long) => math.min(attr, msg)
       val sendMessage = (edge: EdgeTriplet[VertexId, Double]) => {
@@ -166,7 +166,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
       val initialMessage = Long.MaxValue
       val addEdge = sc.parallelize(
-        (0 until 1).map(x => Edge(rows * cols, rows * cols - 1, 1.0))
+        (0 until 1).map(x => Edge(rows * cols, 0, 1.0))
       ).cache()
 
       val initFunc: (VertexId, Long) => Long = (vid, _) => vid
@@ -179,7 +179,9 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
       val pregelGraphPlus
         = Pregel(ccGraphPlus, initialMessage)(vprog, sendMessage, mergeMsg).cache()
 
-      val ccGraph = gridGraph.mapVertices { case (vid, _) => vid }.cache()
+      val ccGraph = gridGraph
+        .partitionBy(PartitionStrategy.EdgePartition1D)
+        .mapVertices { case (vid, _) => vid }.cache()
       val iPregelGraph
         = IncrementalPregel(ccGraph, initialMessage)(vprog, sendMessage, mergeMsg).cache()
 
@@ -189,6 +191,53 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
         iPregelUptate.result.vertices.collect.toList.toSet)
     } // end of withSpark
   } // end of test connected component
+
+  test("Connected Component on LogNormal") {
+    withSpark { sc =>
+      val vprog = (id: VertexId, attr: Long, msg: Long) => math.min(attr, msg)
+      val sendMessage = (edge: EdgeTriplet[VertexId, _]) => {
+        if (edge.srcAttr < edge.dstAttr) {
+          Iterator((edge.dstId, edge.srcAttr))
+        } else if (edge.srcAttr > edge.dstAttr) {
+          Iterator((edge.srcId, edge.dstAttr))
+        } else {
+          Iterator.empty
+        }
+      }
+      val mergeMsg = (a: Long, b: Long) => math.min(a, b)
+      val size = 1000
+      val graph = GraphGenerators
+        .logNormalGraph(sc, size, seed = 1).cache()
+        .removeSelfEdges()
+        .groupEdges((x,y) => x)
+        .cache()
+      println(graph.vertices.collect().toList.toString)
+
+      val initialMessage = Long.MaxValue
+      val addEdge = sc.parallelize(
+        (0 until 1).map(x => Edge(size, 0, 0))
+      ).cache()
+
+      val initFunc: (VertexId, Long) => Long = (vid, _) => vid
+      val graphPlus = graph
+        .partitionBy(PartitionStrategy.EdgePartition1D)
+        .mapVertices {case (vid, _) => vid }
+        .addEdges(addEdge, PartitionStrategy.EdgePartition1D, 0L, initFunc)
+        .cache()
+
+      val pregelGraphPlus
+      = Pregel(graphPlus, initialMessage)(vprog, sendMessage, mergeMsg).cache()
+
+      val ccGraph = graph.mapVertices { case (vid, _) => vid }.cache()
+      val iPregelGraph
+      = IncrementalPregel(ccGraph, initialMessage)(vprog, sendMessage, mergeMsg).cache()
+
+      val iPregelUptate = iPregelGraph.run(addEdge, 0, initFunc).cache()
+
+      assert(pregelGraphPlus.vertices.collect.toList.toSet ===
+        iPregelUptate.result.vertices.collect.toList.toSet)
+    } // end of withSpark
+  }
 
   test("PageRank") {
     def compareRanks(a: VertexRDD[Double], b: VertexRDD[Double]): Double = {
@@ -257,7 +306,7 @@ class IncrementalPregelSuite extends SparkFunSuite with LocalSparkContext {
           .cache()
       addEdge.count()
 
-       val updateEdgeAttr = updateEdgeAttrFunc(addEdge)(_)
+      val updateEdgeAttr = updateEdgeAttrFunc(addEdge)(_)
       val updated = iPregelRank.run(addEdge, (0.0, 0.0),
         updateEdgeAttr = Some(updateEdgeAttr)
         , pruningFunc = pruning

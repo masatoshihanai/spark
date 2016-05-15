@@ -135,7 +135,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
       }
     }
 
-    def sendNull(edgeTriplet: EdgeTriplet[VertexStore[VD], ED])
+    def sendNull(itr: Int)(edgeTriplet: EdgeTriplet[VertexStore[VD], ED])
     : Iterator[(VertexId, Int)] = {
       if (_activeDirection == EdgeDirection.Out) {
         if (edgeTriplet.srcAttr.isIgnorable()) Iterator.empty
@@ -144,9 +144,17 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
         if (edgeTriplet.srcAttr.isIgnorable() && edgeTriplet.dstAttr.isIgnorable()) {
           Iterator.empty
         } else if (edgeTriplet.srcAttr.isIgnorable()) {
-          Iterator((edgeTriplet.dstId, 1))
+          if (edgeTriplet.dstAttr.latestUpdateItr == itr) {
+            Iterator((edgeTriplet.srcId, 1))
+          } else {
+            Iterator.empty
+          }
         } else if (edgeTriplet.dstAttr.isIgnorable()) {
-          Iterator((edgeTriplet.srcId, 1))
+          if (edgeTriplet.srcAttr.latestUpdateItr == itr) {
+            Iterator((edgeTriplet.dstId, 1))
+          } else {
+            Iterator.empty
+          }
         } else {
           Iterator((edgeTriplet.srcId, 1), (edgeTriplet.dstId, 1))
         }
@@ -190,7 +198,7 @@ class IncrementalPregelImpl[VD: ClassTag, ED: ClassTag, A: ClassTag] protected (
 
       // Send activate messages to destination neighbor
       val activateMsg =
-        GraphXUtils.mapReduceTriplets(graph, sendNull, mergeNull, Some(vProgMsg, _activeDirection))
+        GraphXUtils.mapReduceTriplets(graph, sendNull(i), mergeNull, Some(vProgMsg, _activeDirection))
         //.unionVertex(vProgMsg.mapValues((_, vdata) => 1)).cache()
 
       // Pull messages from the neighbors' origin
